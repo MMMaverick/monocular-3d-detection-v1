@@ -1,0 +1,70 @@
+experiment:
+  name: loma_global_2d_repair_params_tracks_v1
+
+inputs:
+  views:
+    rear:
+      tracks_csv: preprocessed/tracks/robust_botsort_hybrid_depth_v1/rear_camera/tracks_hybrid_depth.csv
+      detections_csv: preprocessed/masks/rear_camera/gt2d_sam_masks.csv
+      embedding_cache: outputs/robust_botsort_2d_rear_views/rear_camera/detection_embeddings.npz
+      intrinsic: data/calib/rear_camera/rear_camera-intrinsic.json
+      camera_to_ego: data/calib/rear_camera/rear_camera-to-car_center-extrinsic.json
+    left_rear:
+      tracks_csv: preprocessed/tracks/robust_botsort_hybrid_depth_v1/left_rear_camera/tracks_hybrid_depth.csv
+      detections_csv: preprocessed/masks/left_rear_camera/gt2d_sam_masks.csv
+      embedding_cache: outputs/robust_botsort_2d_rear_views/left_rear_camera/detection_embeddings.npz
+      intrinsic: data/calib/left_rear_camera/left_rear_camera-intrinsic.json
+      camera_to_ego: data/calib/left_rear_camera/left_rear_camera-to-car_center-extrinsic.json
+    right_rear:
+      tracks_csv: preprocessed/tracks/robust_botsort_hybrid_depth_v1/right_rear_camera/tracks_hybrid_depth.csv
+      detections_csv: preprocessed/masks/right_rear_camera/gt2d_sam_masks.csv
+      embedding_cache: outputs/robust_botsort_2d_rear_views/right_rear_camera/detection_embeddings.npz
+      intrinsic: data/calib/right_rear_camera/right_rear_camera-intrinsic.json
+      camera_to_ego: data/calib/right_rear_camera/right_rear_camera-to-car_center-extrinsic.json
+
+association:
+  view_pairs: [[rear, left_rear], [rear, right_rear]]
+  max_time_diff_ms: 20
+  min_track_frames: 3
+  min_candidate_frame_pairs: 2
+  max_frame_pairs_per_candidate: 8
+  box_epipolar_margin_px: 80
+  epipolar_box_sample_grid: 3
+  accept_score: 0.42
+  min_verified_frames: 3
+  min_matches_per_frame: 8
+  min_epipolar_inlier_ratio: 0.45
+  max_epipolar_error_px: 3.0
+  short_track_max_pairs: 3
+  short_track_min_verified_frames: 2
+  short_track_min_loma_score: 0.55
+  appearance_min_score: 0.80
+  fused_accept_score: 0.43
+  fused_min_verified_frames: 2
+  fused_loma_weight: 0.65
+  fused_appearance_weight: 0.35
+  triangulation:
+    min_points_per_frame: 6
+    min_positive_depth_ratio: 0.80
+    max_median_reprojection_error_px: 2.0
+    min_median_ray_angle_deg: 0.25
+    min_verified_frames: 2
+    min_track_loma_score: 0.10
+    min_median_points: 6
+    strong_min_verified_frames: 3
+    strong_min_median_points: 20
+
+loma:
+  model: loma_b
+  input_size: 448
+  num_keypoints: 1024
+  filter_threshold: 0.10
+  crop_padding: 0.08
+  mask_background: true
+
+visualization:
+  max_edges: 100
+  max_frames_per_edge: 3
+
+output:
+  dir: outputs/loma_global_2d_repair_params_tracks_v1

@@ -1,0 +1,48 @@
+# 数据、权重、输出不进入 GitHub。
+data/**
+preprocessed/**
+outputs/**
+checkpoints/**
+models/**
+waymo/**
+Ultralytics/**
+*.pt
+*.pth
+*.ckpt
+*.safetensors
+*.onnx
+*.engine
+*.tar
+*.tar.gz
+*.zip
+
+# 允许保留空目录占位文件。
+!data/.gitkeep
+!preprocessed/.gitkeep
+!checkpoints/.gitkeep
+
+# 外部仓库默认不提交；按 README 手动 clone。
+external/**
+third_party/**
+!external/.gitkeep
+!third_party/.gitkeep
+
+# Python / local runtime
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.ipynb_checkpoints/
+
+# Logs / temp
+*.log
+*.pid
+tmp/
+*_tmp.sh
+
+# OS / IDE
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/

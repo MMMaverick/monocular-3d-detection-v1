@@ -1,0 +1,31 @@
+name: mono-detect-original-2dbox-full-gpu
+channels:
+  - conda-forge
+dependencies:
+  - python=3.11
+  - pip
+  - numpy=1.26.4
+  - pyyaml
+  - scipy
+  - matplotlib
+  - pandas
+  - pillow
+  - pip:
+      # GPU 版建议优先按 README 分两步安装 torch/torchvision。
+      # 这里保留主要 Python 依赖，便于 conda env create 后补装 CUDA torch。
+      - opencv-python==4.10.0.84
+      - ultralytics>=8.3
+      - transformers
+      - safetensors
+      - huggingface_hub
+      - einops
+      - omegaconf
+      - imageio
+      - requests
+      - typer
+      - trimesh
+      - plyfile<1.1.5
+      - moviepy==1.0.3
+      - pycolmap
+      - evo
+      - e3nn

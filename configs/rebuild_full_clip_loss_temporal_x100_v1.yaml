@@ -1,0 +1,45 @@
+base_configs:
+  - rebuild_three_views_robust_botsort_hybrid_depth_temporal_center_depth_safety_v1.yaml
+
+experiment:
+  name: rebuild_full_clip_loss_temporal_x100_v1
+  mode: offline
+  status: full_three_views_clip_loss_to_image_temporal_smoothness_x100
+
+scope:
+  cameras: [rear, left_rear, right_rear]
+  track_ids: {}
+
+observations:
+  projection:
+    clip_loss_to_image: true
+  temporal_smoothness:
+    enabled: true
+    max_gap_frames: 3
+    acceleration:
+      enabled: true
+      lateral_weight: 100.0
+      forward_weight: 50.0
+      vertical_weight: 100.0
+      robust_delta_m: 1.0
+    log_depth_acceleration:
+      enabled: true
+      weight: 100.0
+      robust_delta_log_depth: 0.08
+
+output:
+  dir: outputs/rebuild_full_clip_loss_temporal_x100_v1
+  videos: true
+  video:
+    draw_loss_panel: true
+    loss_panel_mode: full
+    loss_panel_font_scale: 0.62
+    loss_panel_thickness: 2
+    loss_panel_line_height: 24
+    loss_panel_width: 1700
+    draw_support_edges: false
+    draw_2d_box: true
+    box_2d_thickness: 1
+    draw_projected_bbox: false
+    draw_ego_box: true
+    bev_min_depth_m: -5.0

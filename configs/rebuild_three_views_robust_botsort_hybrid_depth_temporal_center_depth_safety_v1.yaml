@@ -1,0 +1,10 @@
+base_configs:
+  - rebuild_three_views_robust_botsort_hybrid_depth_temporal_v1.yaml
+
+experiment:
+  name: rebuild_three_views_robust_botsort_hybrid_depth_temporal_center_depth_safety_v1
+  mode: offline
+  status: temporal_smoothness_with_center_depth_safety_for_near_plane_collapse
+
+output:
+  dir: outputs/rebuild_three_views_robust_botsort_hybrid_depth_temporal_center_depth_safety_v1

@@ -1,0 +1,136 @@
+base_configs:
+  - rebuild_three_views_repair_params_full_wsl_v1.yaml
+
+# 当前主线第二阶段：基于单视角已经优化好的 3D 轨迹，再做跨视角联合后优化。
+# 这里不负责重新做 2D tracking；跨视角同 ID 来自 association.global_track_assignments_csv。
+experiment:
+  name: multiview_joint_loma_repair_from_singleview_v1
+  mode: offline
+  status: second_stage_joint_optimization_from_singleview_with_loma_ids
+
+scope:
+  cameras: [rear, left_rear, right_rear]
+
+multiview_joint:
+  # 总开关：true 表示启用“跨视角后优化”。
+  # false 时脚本会退回旧逻辑：根据单视角 3D 位置重新关联。
+  enabled: true
+
+  # 只优化跨视角成功匹配的 global track。
+  # true：只跑 component 内包含 >=2 个 view 的轨迹。
+  # false：单视角未匹配 track 也会作为 singleton 进入二次优化。
+  multi_view_only: true
+
+  # 单独跑某些 global id。空数组表示不筛选。
+  # global id 来自 outputs/loma_global_2d_repair_params_tracks_v1/global_track_assignments.csv
+  # 例如只跑大车：only_global_track_ids: [116]
+  only_global_track_ids: []
+
+  # 也可以按 source track 筛选。格式固定为 "view:track_id"。
+  # 例如：only_source_tracks: ["rear:2000055", "right_rear:4000000"]
+  only_source_tracks: []
+
+  initialization:
+    # 不同相机 timestamp 小于这个阈值时，合成同一个优化时间节点。
+    timestamp_merge_tolerance_ms: 20.0
+
+    # 初始化时不同视角的基础可信度。
+    # rear 与车朝向更一致，先给 1.0；侧后视略低。
+    view_weights:
+      rear: 1.0
+      left_rear: 0.8
+      right_rear: 0.8
+
+    # bbox 截断会降低该视角单帧 3D 初始化可信度。
+    truncation_weight:
+      none: 1.0
+      single_side: 0.5
+      multi_side: 0.25
+
+    # 最低观测权重，避免所有权重为 0。
+    min_observation_weight: 0.001
+
+    # 多视角 3D 初始化中心差异小于 soft_outlier_m 时正常融合；
+    # 超过后对偏离较大的视角做 Huber 降权。
+    soft_outlier_m: 3.0
+
+    # 多视角 3D 初始化中心差异超过 hard_outlier_m 时，不再平均，
+    # 直接选择权重最高的视角，避免坏视角把初始化拉飞。
+    hard_outlier_m: 8.0
+
+    # 初始化轨迹轻量时序平滑，只用于初值，不是最终 loss。
+    temporal_smoothing:
+      enabled: true
+      prev_weight: 0.25
+      current_weight: 0.50
+      next_weight: 0.25
+      max_gap_ms: 300.0
+
+association:
+  # 固定使用 LoMa/特征匹配得到的同 ID 文件，不重新按 3D 距离做关联。
+  # 暂不启用旧的“根据初步 3D box 位置自动跨视角关联”模式，因为单视角 3D 初值可能本身就有偏。
+  mode: fixed_global_assignments
+  views: [rear, left_rear, right_rear]
+  view_pairs: [[rear, left_rear], [rear, right_rear]]
+  max_time_diff_ms: 20.0
+  min_track_frames: 3
+  global_track_assignments_csv: outputs/loma_global_2d_repair_params_tracks_v1/global_track_assignments.csv
+  accepted_edges_csv: outputs/loma_global_2d_repair_params_tracks_v1/accepted_edges.csv
+
+joint_from_singleview:
+  # 单视角优化结果作为跨视角联合优化的初值和观测来源。
+  singleview_output_dir: outputs/rebuild_three_views_repair_params_full_wsl_v1
+  singleview_boxes_csv: frame_3d_boxes_world_track_joint.csv
+
+  # fixed global assignments 下，这里保持 false，避免未匹配单视角 track 进入。
+  optimize_single_view_components: false
+
+  min_observations: 3
+  max_global_tracks: 0
+
+  # 二次优化里的轨迹平滑 loss。
+  temporal_smoothness:
+    enabled: true
+    weight: 0.2
+    robust_m: 3.0
+
+solver:
+  # 二次联合优化通常比单视角轻；如果某些 global track 仍跳变，可优先调 temporal_smoothness，
+  # 再考虑增加 max_iterations 或降低 learning_rate。
+  device: cuda
+  learning_rate: 0.03
+  max_iterations: 2000
+  progress_interval: 100
+  scheduler:
+    enabled: true
+    type: exponential
+    gamma: 0.98
+    step_size: 25
+    minimum_learning_rate: 0.0001
+  convergence:
+    enabled: true
+    min_iterations: 800
+    patience: 500
+    check_every: 100
+    relative_improvement: 1.0e-5
+    absolute_improvement: 0.1
+
+output:
+  dir: outputs/multiview_joint_loma_repair_from_singleview_v1
+  videos: true
+  video:
+    enabled: true
+    draw_mask_pixels: true
+    draw_2d_box: true
+    box_2d_thickness: 1
+    draw_3d_box: true
+    draw_projected_bbox: false
+    draw_support_edges: false
+    draw_loss_panel: false
+    draw_corner_points: false
+    draw_corner_labels: false
+    draw_center_projection: false
+    draw_box_dimensions: false
+    draw_bev: true
+    draw_ego_box: true
+    bev_min_depth_m: -5.0

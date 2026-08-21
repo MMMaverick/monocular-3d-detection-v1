@@ -1,0 +1,76 @@
+base_configs:
+  - common/rebuild_single_view_ensured_masks_common.yaml
+
+experiment:
+  name: rebuild_three_views_robust_botsort_hybrid_depth_parallel_v1
+  mode: offline
+  status: optimize_3d_boxes_from_robust_botsort_tracks_height_prior_with_da3metric_top_truncation_fallback
+
+scope:
+  cameras: [rear, left_rear, right_rear]
+  track_ids: {}
+
+inputs:
+  views:
+    rear:
+      camera_name: rear_camera
+      image_dir: data/camera/rear_camera
+      track_csv: preprocessed/tracks/robust_botsort_hybrid_depth_v1/rear_camera/tracks_hybrid_depth.csv
+      mask_csv: preprocessed/masks_robust_botsort_ensured_v1/rear_camera/gt2d_sam_masks_ensured_cropped.csv
+      intrinsic: data/calib/rear_camera/rear_camera-intrinsic.json
+      camera_to_ego: data/calib/rear_camera/rear_camera-to-car_center-extrinsic.json
+    left_rear:
+      camera_name: left_rear_camera
+      image_dir: data/camera/left_rear_camera
+      track_csv: preprocessed/tracks/robust_botsort_hybrid_depth_v1/left_rear_camera/tracks_hybrid_depth.csv
+      mask_csv: preprocessed/masks_robust_botsort_ensured_v1/left_rear_camera/gt2d_sam_masks_ensured_cropped.csv
+      intrinsic: data/calib/left_rear_camera/left_rear_camera-intrinsic.json
+      camera_to_ego: data/calib/left_rear_camera/left_rear_camera-to-car_center-extrinsic.json
+    right_rear:
+      camera_name: right_rear_camera
+      image_dir: data/camera/right_rear_camera
+      track_csv: preprocessed/tracks/robust_botsort_hybrid_depth_v1/right_rear_camera/tracks_hybrid_depth.csv
+      mask_csv: preprocessed/masks_robust_botsort_ensured_v1/right_rear_camera/gt2d_sam_masks_ensured_cropped.csv
+      intrinsic: data/calib/right_rear_camera/right_rear_camera-intrinsic.json
+      camera_to_ego: data/calib/right_rear_camera/right_rear_camera-to-car_center-extrinsic.json
+
+solver:
+  max_iterations: 2000
+  learning_rate: 0.01
+  progress_interval: 100
+  convergence:
+    enabled: false
+  track_parallel:
+    enabled: true
+    workers: 4
+
+observations:
+  depth:
+    enabled: true
+    role: initialization_only
+    initialization_mode: da3
+  height_depth_prior:
+    enabled: false
+  temporal_smoothness:
+    enabled: true
+    max_gap_frames: 3
+    acceleration:
+      enabled: true
+      lateral_weight: 1.0
+      forward_weight: 0.5
+      vertical_weight: 1.0
+      robust_delta_m: 1.0
+    log_depth_acceleration:
+      enabled: true
+      weight: 1.0
+      robust_delta_log_depth: 0.08
+
+output:
+  dir: outputs/rebuild_three_views_robust_botsort_hybrid_depth_parallel_v1
+  videos: true
+  video:
+    draw_loss_panel: false
+    draw_support_edges: false
+    draw_2d_box: true
+    box_2d_thickness: 1
+    draw_projected_bbox: false

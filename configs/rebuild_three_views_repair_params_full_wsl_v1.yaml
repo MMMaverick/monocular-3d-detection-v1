@@ -1,0 +1,125 @@
+base_configs:
+  - rebuild_full_clip_loss_temporal_x100_v1.yaml
+
+# 当前主线：三视角分别做“单视角 3D box 轨迹优化”。
+# 注意：这一阶段不同相机之间不共享同一辆车的状态；跨视角同 ID 约束在
+# configs/multiview_joint_loma_repair_from_singleview_v1.yaml 里二次完成。
+experiment:
+  name: rebuild_three_views_repair_params_full_wsl_v1
+  mode: offline
+  status: full_three_views_using_repair_track_parameters
+
+scope:
+  cameras: [rear, left_rear, right_rear]
+  track_ids: {}
+
+solver:
+  device: cuda
+  learning_rate: 0.1
+  max_iterations: 3000
+  progress_interval: 100
+  track_parallel:
+    enabled: true
+    workers: 4
+  scheduler:
+    enabled: true
+    type: exponential
+    gamma: 0.98
+    step_size: 25
+    minimum_learning_rate: 0.0001
+  convergence:
+    enabled: true
+    min_iterations: 2000
+    patience: 1000
+    check_every: 100
+    relative_improvement: 1.0e-5
+    absolute_improvement: 0.1
+
+observations:
+  supporting_edges:
+    enabled: true
+    weight: 400.0
+    truncation_margin_px: 8.0
+    # 重要但有待商榷：
+    # track-level 截断补判用于处理“2D bbox 没完全贴边，但从整条轨迹看明显是截断”的帧。
+    # 它能修复部分边缘车辆，但误判时也可能拉坏近距离大车，所以后续调参/消融时要重点检查。
+    track_level_truncation:
+      enabled: true
+      expand_margin_px: 12.0
+      stop_margin_px: 24.0
+      max_frame_gap: 3
+      size_anomaly_near_border:
+        enabled: true
+        reference_percentile: 90.0
+        min_reference_area_px: 20000.0
+        near_border_margin_px: 96.0
+        max_area_ratio_to_reference: 0.25
+        max_width_ratio_to_reference: 0.5
+        max_height_ratio_to_reference: 0.5
+        min_size_evidence_count: 1
+
+  mask:
+    # contain 是当前 mask 主约束：前景像素应落在 projected 3D box 内。
+    # oversize 只做弱紧致约束，避免为了缩小投影面积而破坏 contain。
+    contain_weight: 1000.0
+    oversize_weight: 0.002
+    max_foreground_points: 512
+    fallback_to_mask_bbox: false
+
+  bbox_fit:
+    # 远距离辅助贴合；近距离强 bbox fit 容易造成“车变小并拉近”的退化。
+    enabled: true
+    weight: 1.0
+    far_start_m: 35.0
+    gate_by: initial_distance
+
+  top_bottom_edges:
+    # 距离超过阈值后才启用上下贴边，用于远距离 3D box 与 2D box 高度更一致。
+    enabled: true
+    weight: 100.0
+    far_start_m: 10.0
+    gate_by: initial_distance
+    one_sided_vertical_truncation: true
+
+  depth_safety:
+    # 暂未启用：早期近距离深度安全项，目前用 ego_box_safety 替代。
+    enabled: false
+
+  center_depth_safety:
+    # 暂未启用：早期中心深度安全项，目前用 ego_box_safety 替代。
+    enabled: false
+
+  ego_box_safety:
+    # 当前启用：自车 3D 包围框与目标 3D box 不应穿插。
+    enabled: true
+    weight: 500.0
+    ego_size: [4.8, 2.0, 1.6]
+    ego_center: [0.0, 0.0, 0.8]
+    margin_m: 0.2
+
+  ground_plane:
+    # 地面约束：目标 box 底面靠近相机高度推得的地平面。
+    # camera_height_m 是相机离地高度，不是车体中心高度。
+    enabled: true
+    camera_height_m: 0.8
+    weight: 5.0
+
+output:
+  dir: outputs/rebuild_three_views_repair_params_full_wsl_v1
+  videos: true
+  video:
+    enabled: true
+    draw_mask_pixels: true
+    draw_2d_box: true
+    box_2d_thickness: 1
+    draw_3d_box: true
+    draw_projected_bbox: false
+    draw_support_edges: false
+    draw_loss_panel: false
+    draw_corner_points: false
+    draw_corner_labels: false
+    draw_center_projection: false
+    draw_box_dimensions: false
+    draw_bev: true
+    draw_ego_box: true
+    bev_min_depth_m: -5.0

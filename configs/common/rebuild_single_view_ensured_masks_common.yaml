@@ -1,0 +1,729 @@
+# 通用配置：单视角 3D box 轨迹优化 + ensured/cropped mask。
+#
+# 这个文件只放“可复用的优化策略参数”，不要放具体实验的 track id
+# 或输出目录。具体实验应该在 configs/*.yaml 中通过 base_configs 引用本文件。
+#
+# 当前优化方式：
+#   - 每个 view/track 单独优化；
+#   - 每条 track 的 size 共享；
+#   - 每帧 center 单独优化；
+#   - yaw 不优化，固定为 rear 参考方向；
+#   - pitch / roll 固定为 0；
+#   - 不使用地面、点云、多视角联合项；
+#   - mask 使用 ensured/cropped masks，因此理论上每个 tracking bbox 都有 mask。
+
+coordinates:
+  # 优化坐标系。
+  # camera 表示每个观测的中心点参数在当前相机坐标系下：
+  #   x：图像右方
+  #   y：图像下方
+  #   z：相机前方深度
+  #
+  # 注意：这里是单视角逐 track 优化，不是 world-frame 跨视角联合优化。
+  optimization_frame: camera
+
+  # 尺寸顺序。
+  # length：车辆前后方向
+  # width ：车辆左右方向
+  # height：车辆竖直方向
+  size_order: [length, width, height]
+
+solver:
+  # 每个 view 最多跑多少条 track。
+  # 0 表示不额外限制；实验配置中的 scope.track_ids 仍然可以进一步筛选。
+  max_tracks_per_view: 0
+
+  # 固定最大迭代数。
+  # 0 表示不使用固定步数，而是使用 convergence.safety_max_iterations
+  # 作为硬上限，并启用早停逻辑。
+  max_iterations: 0
+
+  # Adam 初始学习率。
+  # 调大：移动更快，但更容易震荡/越过好解。
+  # 调小：更稳，但收敛慢。
+  learning_rate: 0.01
+
+  track_parallel:
+    # 是否并行优化多个 track。
+    # 每个 track 的优化目标彼此独立，因此可以放到不同 worker 中同时跑。
+    # 注意：如果 device=cuda，多个 worker 会同时抢同一张 GPU；通常 2~4 比较合适，
+    # 太大可能因为显存/调度开销反而变慢。
+    enabled: false
+
+    # 并行 worker 数量。
+    # 1 等价于串行；4 表示最多同时优化 4 条 track。
+    workers: 1
+
+  convergence:
+    # 是否启用早停。
+    # 当 solver.max_iterations=0 时，实际最多跑 safety_max_iterations。
+    enabled: false
+
+    # 至少跑多少步之后才允许早停。
+    min_iterations: 300
+
+    # 早停耐心值。
+    # 如果超过 min_iterations 后，连续约 patience 步没有足够改善，就停止。
+    patience: 120
+
+    # 每隔多少步检查一次 best loss 是否改善。
+    check_every: 10
+
+    # 相对改善阈值。
+    # 新 loss 需要小于：
+    #   best_loss - max(absolute_improvement, relative_improvement * max(abs(best_loss), 1))
+    # 才算有效改善。
+    relative_improvement: 1.0e-5
+
+    # 绝对改善阈值下限。
+    absolute_improvement: 0.1
+
+    # 收敛模式下的硬最大步数。
+    safety_max_iterations: 2000
+
+variables:
+  yaw:
+    # yaw 暂不优化。
+    # 车在驾驶场景中只允许 yaw 自由，但当前阶段先固定 yaw，
+    # 避免几何/数据问题和 yaw 优化互相混淆。
+    optimize: false
+
+    # 描述性字段：所有视角都使用 rear camera / 自车运动方向作为朝向参考。
+    default: parallel_to_rear_camera_in_all_views
+
+    # 朝向参考视角。
+    # left_rear / right_rear 的 3D box 不跟随侧相机光轴，而是使用 rear
+    # 参考方向投到当前相机中。
+    reference_view: rear
+
+constraints:
+  upright_box:
+    # 是否强制 box upright。
+    # true 表示不允许 pitch / roll，车辆不会“侧弯”或“前后栽”。
+    enabled: true
+
+    # 使用 rear 参考方向生成 length/width/height 轴，再变换到当前相机。
+    up_axis: rear_reference_axes_in_current_camera
+
+    # pitch 固定为 0。
+    pitch: 0.0
+
+    # roll 固定为 0。
+    roll: 0.0
+
+  ground_contact:
+    # 当前不使用地面接触约束。
+    # 如果后续加入地面平面，可以在这里打开。
+    enabled: false
+
+label_aliases:
+  # raw label -> canonical label
+  VEHICLE_CAR: car
+  VEHICLE_SUV: car
+  VEHICLE_TRUCK: truck
+  VEHICLE_TRUCK_SMALL: truck
+  VEHICLE_TRAILER: truck
+  VEHICLE_BUS: bus
+  PEDESTRIAN_NORMAL: person
+  MOTOR: motorcycle
+  CYCLIST_MOTOR: motorcycle
+  BICYCLE: bicycle
+  CYCLIST_BICYCLE: bicycle
+  VEHICLE_TRIKE: motorcycle
+
+class_defaults:
+  # canonical labels only; size order is [length, width, height], unit is meter.
+  default:
+    init_size: [4.5, 1.8, 1.6]
+    min_size: [4.2, 1.7, 1.4]
+    max_size: [6.5, 2.5, 2.4]
+  car:
+    init_size: [4.5, 1.8, 1.6]
+    min_size: [4.2, 1.7, 1.4]
+    max_size: [6.5, 2.5, 2.4]
+  truck:
+    init_size: [15.0, 2.5, 3.2]
+    min_size: [12.0, 2.4, 2.4]
+    max_size: [25.0, 5.0, 5.0]
+  bus:
+    init_size: [11.0, 2.6, 3.3]
+    min_size: [8.0, 2.0, 2.5]
+    max_size: [15.0, 3.5, 4.2]
+  person:
+    init_size: [0.8, 0.8, 1.7]
+    min_size: [0.6, 0.6, 1.25]
+    max_size: [1.2, 1.2, 2.2]
+  motorcycle:
+    init_size: [2.0, 0.8, 1.5]
+    min_size: [1.5, 0.6, 1.1]
+    max_size: [3.0, 1.2, 2.0]
+  bicycle:
+    init_size: [1.8, 0.6, 1.5]
+    min_size: [1.35, 0.45, 1.1]
+    max_size: [2.5, 1.0, 2.0]
+
+observations:
+  supporting_edges:
+    # 支撑边 loss 权重。
+    #
+    # 作用：
+    #   - 将 3D box 投影后的最左竖边贴近 2D bbox 左边；
+    #   - 将 3D box 投影后的最右竖边贴近 2D bbox 右边。
+    #
+    # 截断处理：
+    #   重要：截断判断条件目前仍有待商榷，会直接影响 supporting edge、top/bottom、
+    #   height-depth prior、size reliable frame 等关键约束是否启用。
+    #   后续如果发现车辆被错误推远/拉近，必须优先检查这里，而不是先调 loss 权重。
+    #   - 如果某侧 2D bbox 贴近图像边界，该侧使用单边约束；
+    #   - 避免要求不可见边强行贴到图像内。
+    #
+    # 调大：左右贴边更强。
+    # 调小：center/depth/size 更自由。
+    weight: 400.0
+
+    # 单帧 bbox 到图像边界小于该距离时，认为该侧被图像截断。
+    # 重要：这个阈值不是最终定论，目前应视为经验规则；过小会漏判截断，
+    # 过大会把正常完整 bbox 误判为截断。
+    # 之前默认 2px 太严格，x2=1914~1917 这类靠边车辆会被误判为未截断。
+    truncation_margin_px: 8.0
+
+    # 轨迹级截断修正。
+    # 重要：这组规则有待进一步验证。它会跨帧传播截断状态，并会影响整条 track
+    # 的 size 更新可靠性，因此对大车、近距离车、侧后视边缘目标尤其敏感。
+    # 逻辑：
+    #   1) 先用 truncation_margin_px 做逐帧截断判断；
+    #   2) 如果同一 track 在某一侧已经出现截断帧，则沿时间前后扩展；
+    #   3) 只要该侧 bbox 仍靠近图像边界，就继续认为该侧截断。
+    # 目的：
+    #   - 处理“整条 track 从边界进入/离开，但个别帧 x2 离边界几像素”的情况；
+    #   - 避免非截断 equality edge loss 把近距离车推远。
+    track_level_truncation:
+      enabled: true
+      expand_margin_px: 12.0
+      stop_margin_px: 24.0
+      max_frame_gap: 3
+
+      # 基于整条 track 的 bbox 尺寸异常来补充判断截断。
+      # 场景：
+      #   - 同一辆车在 track 中间 bbox 很大；
+      #   - 到图像边缘时 bbox 面积/宽高突然变得很小；
+      #   - 单帧 bbox 可能离边界还有几十像素，但这通常是检测框只框住了可见局部。
+      # 这种帧应按截断处理，不能强迫不可见的 3D box 边贴到图像内。
+      size_anomaly_near_border:
+        enabled: true
+        reference_percentile: 90.0
+        min_reference_area_px: 20000.0
+        near_border_margin_px: 96.0
+        max_area_ratio_to_reference: 0.25
+        max_width_ratio_to_reference: 0.5
+        max_height_ratio_to_reference: 0.5
+        min_size_evidence_count: 1
+
+  bbox_fit:
+    # 是否启用 3D 投影外接矩形与 2D bbox 的贴合 loss。
+    #
+    # 当前实现已改成“远距离硬开关”：
+    #   distance < far_start_m  => bbox_fit = 0
+    #   distance >= far_start_m => bbox_fit 启用
+    #
+    # 默认用初始/观测 3D center 的距离做开关，而不是优化过程中的当前距离。
+    # 这样可以避免近距离截断目标一旦被错误推远，就触发远距离 bbox_fit 并继续自增强。
+    enabled: true
+
+    # bbox_fit 基础权重。
+    # 实际启用时还会乘 far_multiplier 和 rear_multiplier（如果是 rear）。
+    weight: 1.0
+
+    # rear 视角额外倍率。
+    # 只对 view == rear 生效；left_rear/right_rear 不受这个参数影响。
+    rear_multiplier: 3.0
+
+    # 远距离启用后的倍率。
+    # 注意：现在没有 far_full_m，也没有线性渐变。
+    # 只要 distance >= far_start_m，就直接乘这个倍率。
+    far_multiplier: 3.0
+
+    # 远距离硬开关阈值，单位米。
+    # 小于 35m 的近距离目标完全不使用 bbox_fit。
+    # 大于等于 35m 的目标启用 bbox_fit。
+    far_start_m: 35.0
+
+    # 远距离开关使用哪种距离：
+    #   initial_distance：使用优化前由 depth/height prior 初始化出来的距离，推荐；
+    #   current_distance：使用优化过程中的当前距离，容易让近距离截断目标被推远后自触发。
+    gate_by: initial_distance
+
+    # top/bottom 截断时的处理：
+    #   one_sided：如果上边/下边被图像截断，不强迫 3D 投影边等于 2D bbox 边，只要求覆盖可见 bbox；
+    #   equality：无论是否截断都强制等式贴合。
+    vertical_truncation_mode: one_sided
+
+  mask:
+    # 是否使用 mask 采样点，而不是只用 mask bbox。
+    #
+    # true：
+    #   从 mask 中采样点，约束这些点被 3D box 的投影区域包含。
+    #
+    # false：
+    #   不使用像素点；如果 fallback_to_mask_bbox=true，则会退化成 mask bbox 约束。
+    use_foreground_points: true
+
+    # mask 点采样模式。
+    #
+    # external_contour：
+    #   只使用 mask 的外接轮廓点，不使用内部所有前景像素。
+    #   适合快速检查边界，但不是“全部前景像素点包含”版本。
+    #
+    # foreground_pixels：
+    #   使用 mask 内前景像素点。当前版本使用这个模式，并通过 max_foreground_points
+    #   控制每帧采样数量。
+    point_sample_mode: foreground_pixels
+
+    # 每帧最多采样多少个 mask 点。
+    # 0 表示不限制数量，也就是直接使用所有前景像素点参与训练。
+    # 调大为正数：最多只保留这么多个点，速度更快但会变成采样模式。
+    # 当前回到采样模式：每帧最多使用 512 个前景像素点。
+    max_foreground_points: 512
+
+    # mask containment 权重。
+    # 作用：惩罚 mask 采样点落在 projected 3D box 本体之外。
+    # 注意：这里不再使用 3D box 投影后的外接矩形，而是使用 6 个 3D box
+    # 投影面的并集来判断点是否被真实投影盒体包含。
+    #
+    # 当前 point_sample_mode=foreground_pixels，所以这里约束的是采样后的前景像素点。
+    #
+    # 调大：更强制包含 mask 外轮廓。
+    # 调小：mask 对 box 位置/大小影响变弱。
+    contain_weight: 1000.0
+
+    # containment loss 的聚合方式。
+    #
+    # max：
+    #   使用“最坏点”的越界距离作为每帧 loss。
+    #   只要还有任何采样点在 projected 3D box 本体外，loss 就会继续存在。
+    #   适合 external_contour。
+    #
+    # mean：
+    #   对所有前景像素点越界距离取平均。全部像素点版本建议使用 mean，
+    #   否则单个噪声点会过度主导优化。
+    contain_reduction: mean
+
+    # mask oversize 权重。
+    # 作用：防止 projected 3D box 屏幕内可见投影面积相对 mask 面积过大。
+    # 注意：这里不再使用 3D box 投影后的外接矩形面积，而是使用 8 个投影角点
+    # 构成的可见轮廓/凸包面积，并按图像边界 clamp 到屏幕内，只计算屏幕内面积；
+    # 这样靠边/截断目标不会因为屏幕外投影区域被额外惩罚。
+    #
+    # 调大：更紧致，但可能和 contain/supporting_edges 冲突。
+    # 调小：允许 3D 投影区域更大。
+    oversize_weight: 0.002
+
+    # oversize 激活阈值。
+    # 当：
+    #   projected_3d_box_visible_area_inside_image / mask_area > oversize_max_area_ratio
+    # 时，才开始惩罚过大。
+    #
+    # 当前设置为 0，表示只要 projected 3D box 有屏幕内面积就会被惩罚；
+    # 目的不是让面积接近 1，而是在满足 mask contain / supporting edges 的同时，
+    # 把 3D box 投影压到尽可能小。
+    oversize_max_area_ratio: 0.0
+
+    # 是否在没有前景像素点时回退到 mask bbox。
+    #
+    # 当前使用 ensured masks，理论上每个 frame/track 都有 mask 像素；
+    # 因此这里保持 false，避免无声地使用粗糙 bbox 替代像素约束。
+    fallback_to_mask_bbox: false
+
+  depth:
+    # depth 当前只用于初始化，不作为优化 loss。
+    enabled: true
+    role: initialization_only
+
+    # 初始化深度来源。
+    # da3：
+    #   优先使用 track CSV 中的 x_cam/y_cam/z_cam 或 depth_median。
+    # height_prior：
+    #   所有帧都用 z = fy * class_height_prior / bbox_height_px。
+    # height_prior_beyond_distance：
+    #   近距离仍用 DA3；当 DA3 z >= height_prior_replace_da3_beyond_m 时，
+    #   改用高度先验反推 depth。
+    initialization_mode: da3
+
+    # 当 initialization_mode=height_prior_beyond_distance 时使用。
+    # 0 表示不替换。
+    height_prior_replace_da3_beyond_m: 0.0
+
+    # 可选：用外部 CSV 覆盖初始化 3D center。
+    # CSV 需要包含 view, frame, track_id, cx, cy, cz。
+    # 用途：例如先对 initial 3D tracks 做时序平滑，再把平滑后的 cx/cy/cz
+    # 作为优化初始化；没有匹配到的帧仍使用原始 depth/height prior 初始化。
+    initial_center_override_csv: ""
+
+  depth_safety:
+    # 是否启用深度安全 loss。
+    # 用于防止 3D box 角点离相机中心太近，导致投影数值爆炸。
+    # 注意：这里不再要求所有角点都在相机前方；侧后视/近距离车辆确实可能出现
+    # 部分角点 z < 0 的情况，这是允许的。
+    enabled: true
+
+    # 安全约束模式：
+    # - min_corner_distance_to_camera：按角点到相机中心的 3D 欧氏距离判断，允许角点在相机后方。
+    # - min_corner_z_depth：旧模式，按 camera z 深度判断，会惩罚相机后方角点。
+    mode: min_corner_distance_to_camera
+
+    # 最小角点到相机中心距离，单位米。
+    # 小于这个距离才惩罚；例如 0.2m 表示只禁止非常贴近相机中心的角点。
+    min_corner_distance_m: 0.2
+
+    # 深度安全 loss 权重。
+    # 这是防崩项，正常情况下应该为 0。
+    weight: 100.0
+
+  ego_box_safety:
+    # 是否启用自车 3D 包围框安全约束。
+    # 在 ego/car_center 坐标系下计算：目标 3D box 不能进入自车 3D box 外扩 margin 后的区域。
+    # 这个约束可以作为近距离物理安全项，用来替代 depth_safety / center_depth_safety 的部分作用。
+    enabled: false
+
+    # loss 权重。目标 box 进入自车外扩包围框时，按最小穿透深度平方惩罚。
+    weight: 500.0
+
+    # 自车尺寸，顺序为 [length, width, height]，单位米。
+    ego_size: [4.8, 2.0, 1.6]
+
+    # 自车 box 中心在 ego/car_center 坐标系下的位置，单位米。
+    # 默认 z=0.8 表示自车高度 1.6m 时底面大约贴地。
+    ego_center: [0.0, 0.0, 0.8]
+
+    # 自车 box 外扩安全距离。0.2 表示目标 box 距离自车 box 小于 20cm 就会被惩罚。
+    margin_m: 0.2
+
+  top_bottom_edges:
+    # 是否启用上下贴边 loss。
+    # 这个 loss 专门约束 projected 3D box 的上边/下边贴近 2D bbox 的上边/下边。
+    # 它和 supporting_edges 分开记录：supporting_edges 只管左右竖边。
+    enabled: true
+
+    # 上下贴边 loss 权重。
+    # 当前先设为 100，和 mask/edge 处于同一量级，后续可以按视频再调。
+    weight: 100.0
+
+    # 只对距离大于该阈值的观测启用，单位米。
+    # 近距离目标透视、截断、mask/2D label 误差更明显，因此先不强制上下贴边。
+    # 当前默认用初始距离做开关，避免优化中被错误推远后反过来触发这个 loss。
+    far_start_m: 10.0
+
+    # 远距离开关使用哪种距离：
+    #   initial_distance：使用优化前的 center 距离，推荐；
+    #   current_distance：使用当前优化距离。
+    gate_by: initial_distance
+
+    # 上下截断时使用单边约束：
+    #   top 截断：允许 projected top 在 2D bbox top 之外/更靠上，只惩罚没有覆盖到 bbox top；
+    #   bottom 截断：允许 projected bottom 在 2D bbox bottom 之外/更靠下，只惩罚没有覆盖到 bbox bottom。
+    one_sided_vertical_truncation: true
+
+  size_ratio_prior:
+    # 是否启用长宽高比例先验。
+    # 这个先验不约束绝对尺寸，只约束 length:width:height 的比例不要偏离类别初始化比例太多。
+    # 例如 car 可以整体变小/变大，但不应轻易退化成 length 很小、width 很大、height 很高的形状。
+    enabled: true
+
+    # 比例先验权重。
+    # 调大：更能防止 size 退化，但可能和贴边/mask 紧致性冲突。
+    # 调小：更自由，但容易再次出现异常比例。
+    weight: 1.0
+
+    # log_shape_ratio：
+    #   对 size 和 init_size 分别取 log，再减去自身均值，只比较形状比例；
+    #   因此不会强迫绝对 length/width/height 回到 init_size。
+    mode: log_shape_ratio
+
+  class_size_prior:
+    # 是否启用类别绝对尺寸先验。
+    # 和 size_ratio_prior 不同：
+    #   - size_ratio_prior 只约束 length:width:height 的形状比例；
+    #   - class_size_prior 直接约束 length、width、height 不要离类别 init_size 太远。
+    # 这个 loss 用 soft hinge：在允许范围内不惩罚，超过范围后才惩罚。
+    enabled: true
+
+    # 类别尺寸先验权重。
+    # 调大：更强防止 size 被 mask/edge/oversize 拉成异常尺寸。
+    # 调小：更信任 2D/mask 观测，允许类别尺寸变化更大。
+    weight: 100.0
+
+    # log_hinge：
+    #   deviation = abs(log(size / class_init_size))
+    #   excess = max(deviation - max_log_deviation, 0)
+    #   loss = mean(excess^2) * weight
+    # log_l2：
+    #   不设免惩罚区，直接惩罚 abs(log(size / class_init_size))。
+    mode: log_hinge
+
+    # 每个轴允许偏离类别 init_size 的 log 比例，顺序为 [length, width, height]。
+    # 约等于：
+    #   0.45 -> 允许约 /1.57 到 *1.57
+    #   0.35 -> 允许约 /1.42 到 *1.42
+    # 超过这个范围后才开始产生 class_size_prior loss。
+    max_log_deviation: [0.45, 0.35, 0.35]
+
+  height_depth_prior:
+    # 是否启用“类别高度 + 2D bbox 像素高度”反推深度的先验。
+    # 目的：
+    #   当 mask/贴边 loss 倾向于把 3D box 拉得过近、同时把 size 拉坏时，
+    #   用针孔模型给 center z 一个独立的尺度锚点。
+    #
+    # 核心公式：
+    #   z_prior = fy * H_prior / bbox_height_px
+    #
+    # 其中：
+    #   fy 来自相机内参；
+    #   H_prior 默认来自类别 init_size 的 height；
+    #   bbox_height_px = y2 - y1。
+    enabled: false
+
+    # 高度反深度先验权重。
+    # 调大：更强防止车辆被拉得过近；
+    # 调小：更信任 mask/贴边观测。
+    weight: 100.0
+
+    # log_hinge：
+    #   log_dev = abs(log(current_center_z / z_prior))
+    #   excess = max(log_dev - max_log_depth_deviation, 0)
+    #   loss = excess^2 * weight
+    #
+    # log_l2：
+    #   不设免惩罚区，直接惩罚 log_dev。
+    mode: log_hinge
+
+    # 高度来源。
+    # class_init：
+    #   使用类别 init_size 的 height，推荐；它不会被当前优化退化影响。
+    # optimized_size：
+    #   使用当前优化中的 size[height]，一般不推荐，因为 size 已经被拉坏时会失去锚点。
+    height_source: class_init
+
+    # 允许 current_center_z 和 z_prior 在 log 空间的无惩罚偏差。
+    # 0.25 约等于允许 /1.28 到 *1.28 的深度浮动。
+    max_log_depth_deviation: 0.25
+
+    # bbox 上/下边被图像截断时，bbox_height_px 不可信，默认不启用该帧高度反深度先验。
+    exclude_truncated_vertical: true
+
+    # 只对距离大于该阈值的观测启用；0 表示所有未竖向截断帧都启用。
+    far_start_m: 0.0
+
+  ground_plane:
+    # 是否启用地面约束。
+    # 这里使用每个相机的 camera_to_ego 外参计算地面法向，因此会考虑相机 pitch / roll。
+    enabled: true
+
+    # 相机中心到真实地面的高度，单位米。
+    # 当前默认 0.8m。地面平面在 camera frame 中由：
+    #   dot(ground_normal_cam, P_cam) + camera_height_m = 0
+    # 给出，其中 ground_normal_cam 是 ego/car up 方向 [0,0,1] 变换到当前相机坐标系。
+    camera_height_m: 0.8
+
+    # 分相机覆盖相机高度。
+    # 未列出的 view 继续使用上面的全局 camera_height_m。
+    # 当前设置：
+    #   rear 使用 0.6m；
+    #   left_rear/right_rear 不覆盖，因此仍使用 0.8m。
+    camera_height_m_by_view:
+      rear: 0.6
+
+    # ground loss 距离衰减。
+    # 目的：近距离目标强贴地，远距离目标降低 ground loss，避免远距离深度/2D/mask
+    # 噪声和地面约束冲突，把车拉坏。
+    distance_decay:
+      enabled: true
+
+      # 距离来源：
+      #   initial_camera_distance：使用优化前初始化 center 到当前相机的 3D 距离，推荐；
+      #   initial_z：只使用初始化 camera z；
+      #   current_camera_distance：使用优化过程当前距离，不推荐，可能被优化器利用。
+      distance_source: initial_camera_distance
+
+      # 距离 <= near_m 时，ground loss 保持 100% 权重。
+      near_m: 8.0
+
+      # 距离 >= far_m 时，ground loss 衰减到 min_multiplier。
+      far_m: 35.0
+
+      # 远距离最小倍率。0.1 表示远距离仍保留 10% ground loss。
+      min_multiplier: 0.1
+
+      # 衰减曲线：
+      #   smoothstep：平滑衰减，推荐；
+      #   linear：线性衰减。
+      mode: smoothstep
+
+    # 地面约束权重。
+    # 作用：让 3D box 底部 4 个角点贴近由外参和相机高度确定的真实地面平面。
+    weight: 5.0
+
+    # 当前只支持底部角点贴地。
+    mode: bottom_corners_to_ground_plane
+
+  temporal_smoothness:
+    # Temporal smoothing is disabled by default and enabled per experiment.
+    # It uses the first frame rear/ego axes as a fixed reference plane.
+    # 平面方向和竖直方向分开计 loss；竖直方向用于抑制高度/贴地跳变。
+    enabled: false
+    max_gap_frames: 3
+    acceleration:
+      enabled: true
+      lateral_weight: 1.0
+      forward_weight: 0.5
+      vertical_weight: 1.0
+      robust_delta_m: 1.0
+    log_depth_acceleration:
+      enabled: true
+      weight: 1.0
+      robust_delta_log_depth: 0.08
+
+  center_depth_safety:
+    # Disabled by default. When enabled, it prevents the optimized 3D box
+    # center from being pulled too close to the camera along camera z.
+    # This is mainly for large truncated foreground objects where mask contain
+    # can otherwise collapse the box to the near plane.
+    enabled: false
+    weight: 200.0
+    default_min_center_depth_m: 0.0
+    min_center_depth_m:
+      car: 1.0
+      truck: 2.0
+      bus: 2.0
+      motorcycle: 0.5
+      bicycle: 0.5
+      person: 0.5
+
+  projection:
+    # 投影时的最小深度 clamp，单位米。
+    # 只用于避免除以接近 0 的深度；不是要求所有角点都必须在相机前方。
+    # 当角点 z <= 0 或太小时，投影会用这个 near-plane 值做数值保护。
+    min_depth_m: 0.2
+
+  no_mask_frames:
+    # 没有 mask 的帧如何处理。
+    #
+    # edge_only：
+    #   如果 has_mask=False，则 bbox_fit 被置零，只保留支撑边等其它项。
+    #
+    # 当前 ensured masks 应该让每个 frame/track 都有 mask，所以这个配置
+    # 只是安全兜底。
+    mode: edge_only
+
+  size_update:
+    # 哪些帧允许更新整条 track 共享的 size。
+    #
+    # reliable_mask_untruncated_only：
+    #   - 有 mask 且未截断的帧可以更新 size；
+    #   - 截断/不可靠帧仍然优化自己的 center；
+    #   - 但这些帧对共享 size 的梯度会 detach，避免把整条 track 的 size 拉坏。
+    #   - 如果整条 track 都没有未截断帧，可以通过 fallback_to_mask_frames_when_no_reliable
+    #     允许有 mask 的截断帧以较小梯度更新 size，避免 size 永远卡在类别初始化。
+    mode: reliable_mask_untruncated_only
+
+    # 是否排除截断帧对共享 size 的更新。
+    exclude_truncated: true
+
+    # 当整条 track 没有任何“有 mask 且未截断”的可靠帧时，是否允许有 mask 的帧作为 fallback 更新 size。
+    # 主要解决短截断 track 的 size 卡在 init_size，导致 oversize 很大但降不下去的问题。
+    fallback_to_mask_frames_when_no_reliable: true
+
+    # fallback 帧对共享 size 的梯度比例。
+    # 1.0 表示和可靠帧一样强；0.25 表示只用 1/4 的梯度，降低截断帧拉坏 size 的风险。
+    fallback_size_gradient_scale: 0.25
+
+output:
+  # 是否在优化完成后渲染视频。
+  videos: true
+
+  video:
+    # 视频渲染总开关。
+    enabled: true
+
+    # 展示版默认关闭 debug 风格颜色。
+    # 只展示 mask、2D box、3D box 和右侧 BEV。
+    debug_geometry_style: false
+
+    # 绘制 3D box 投影线框。
+    draw_3d_box: true
+
+    # 是否绘制 3D box 投影后的外接矩形。
+    # false 表示不画黄色投影 bbox，只保留 3D 线框。
+    draw_projected_bbox: false
+
+    # 绘制原始 2D tracking bbox。
+    draw_2d_box: true
+
+    # 2D bbox line thickness. Use 1 for a cleaner visualization.
+    box_2d_thickness: 1
+
+    # 展示版不绘制支撑边对应关系。
+    # 专业调试版需要检查贴边时，可以在实验配置里单独改为 true。
+    draw_support_edges: false
+
+    # 绘制 mask 前景像素。
+    draw_mask_pixels: true
+
+    # 展示版不绘制 3D box 八个角点。
+    draw_corner_points: false
+
+    # 是否显示 0-7 角点编号。
+    # false 可以减少画面遮挡。
+    draw_corner_labels: false
+
+    # 展示版不绘制 3D center 投影点。
+    draw_center_projection: false
+
+    # 在 3D box 附近显示当前优化出的长宽高，单位米。
+    # 显示格式为：
+    #   LWH=length,width,height m
+    # 注意这里的 length/width/height 是固定语义轴，不根据图像里哪条边最长来判断。
+    draw_box_dimensions: false
+
+    # 3D box 长宽高文字大小。
+    box_dimensions_font_scale: 0.62
+
+    # 3D box 长宽高文字粗细。
+    box_dimensions_thickness: 2
+
+    # 展示版不在视频左上角显示每帧 loss 数值。
+    # 专业调试版需要查看 loss 时，可以在实验配置里单独改为 true。
+    draw_loss_panel: false
+
+    # 是否在视频右侧追加 BEV 俯视面板。
+    # BEV 使用 rear reference camera 坐标系：
+    #   横轴为后视参考相机 x；
+    #   纵轴为后视参考相机 z；
+    #   left_rear / right_rear 的 box 会先变换到这个统一坐标轴后再显示。
+    draw_bev: true
+
+    # BEV 右侧面板宽度，单位像素。
+    bev_width_px: 560
+
+    # BEV 显示的最大深度，单位米。
+    # 0 表示根据当前帧目标自动缩放，并保留一定边距。
+    bev_max_depth_m: 0
+
+    # BEV 左右显示范围，单位米。
+    # 0 表示根据当前帧目标自动缩放，并保留一定边距。
+    bev_half_width_m: 0
+
+    # loss 面板字体缩放。
+    loss_panel_font_scale: 0.72
+
+    # loss 面板字体粗细。
+    loss_panel_thickness: 2
+
+    # loss 面板每行高度，单位像素。
+    loss_panel_line_height: 28
+
+    # loss 面板背景宽度，单位像素。
+    loss_panel_width: 1700
+
+    # 每个 view 最多渲染多少帧。
+    # 0 表示全部渲染。
+    max_frames_per_view: 0

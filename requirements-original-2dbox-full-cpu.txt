@@ -1,0 +1,23 @@
+--extra-index-url https://download.pytorch.org/whl/cpu
+torch
+torchvision
+ultralytics>=8.3
+opencv-python==4.10.0.84
+numpy==1.26.4
+PyYAML>=6
+Pillow
+scipy
+transformers
+safetensors
+huggingface_hub
+einops
+omegaconf
+imageio
+requests
+typer
+trimesh
+plyfile
+moviepy==1.0.3
+pycolmap
+evo
+e3nn

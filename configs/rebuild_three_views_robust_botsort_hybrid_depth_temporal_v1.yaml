@@ -1,0 +1,23 @@
+base_configs:
+  - rebuild_three_views_robust_botsort_hybrid_depth_parallel_v1.yaml
+
+experiment:
+  name: rebuild_three_views_robust_botsort_hybrid_depth_temporal_v1
+  mode: offline
+  status: optimize_3d_boxes_with_temporal_smoothness_fixed_first_rear_reference
+
+output:
+  dir: outputs/rebuild_three_views_robust_botsort_hybrid_depth_temporal_v1
+
+observations:
+  center_depth_safety:
+    enabled: true
+    weight: 200.0
+    default_min_center_depth_m: 0.0
+    min_center_depth_m:
+      car: 1.0
+      truck: 2.0
+      bus: 2.0
+      motorcycle: 0.5
+      bicycle: 0.5
+      person: 0.5
