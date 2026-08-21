@@ -11,21 +11,13 @@ dependencies:
   - pandas
   - pillow
   - pip:
-      # GPU 版建议优先按 README 分两步安装 torch/torchvision。
-      # 这里保留主要 Python 依赖，便于 conda env create 后补装 CUDA torch。
+      # 当前 release 模式假设 2D box / track / mask / depth 初始化已经准备好。
+      # 因此默认不安装 YOLO/SAM/Depth 等检测分割依赖，避免它们自动拉错 torch/numpy。
+      # GPU torch/torchvision 请按 README 单独安装。
       - opencv-python==4.10.0.84
-      - ultralytics>=8.3
-      - transformers
-      - safetensors
-      - huggingface_hub
       - einops
       - omegaconf
       - imageio
       - requests
-      - typer
       - trimesh
-      - plyfile<1.1.5
       - moviepy==1.0.3
-      - pycolmap
-      - evo
-      - e3nn

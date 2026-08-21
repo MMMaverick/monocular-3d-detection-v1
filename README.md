@@ -75,11 +75,14 @@ conda env create -f environment-ubuntu-gpu.yml
 conda activate mono-detect-original-2dbox-full-gpu
 ```
 
-安装 CUDA 版 PyTorch。当前 WSL 测试用的是 CUDA 12.x 对应的 PyTorch wheel；Ubuntu 新机器建议根据实际 NVIDIA driver 选择版本。若使用 CUDA 12.8：
+安装 CUDA 版 PyTorch。当前 WSL 测试用的是 CUDA 12.8 对应的 PyTorch wheel；Ubuntu 新机器建议根据实际 NVIDIA driver 选择版本。若使用 CUDA 12.8：
 
 ```bash
 pip install torch torchvision --index-url https://download.pytorch.org/whl/cu128
+pip install --force-reinstall --no-deps numpy==1.26.4
 ```
+
+第二行是必要的：部分 PyTorch/torchvision wheel 会把 numpy 升到 2.x；当前代码和 OpenCV 组合按 `numpy==1.26.4` 测试。
 
 验证：
 
