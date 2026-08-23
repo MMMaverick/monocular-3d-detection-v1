@@ -210,14 +210,14 @@ def process_view(
     assigned = sum(int(row["track_id"]) >= 0 for row in output_rows)
     return {
         "view": view,
-        "source_csv": str(source_csv.relative_to(PROJECT_ROOT)),
+        "source_csv": display_path(source_csv),
         "frames_processed": len(all_frames),
         "source_detections": sum(len(by_frame.get(frame, [])) for frame in all_frames),
         "assigned_detections": assigned,
         "unassigned_detections": len(output_rows) - assigned,
         "tracks": len(track_summary),
-        "tracks_csv": str(tracks_csv.relative_to(PROJECT_ROOT)),
-        "embedding_cache": str(cache_path.relative_to(PROJECT_ROOT)),
+        "tracks_csv": display_path(tracks_csv),
+        "embedding_cache": display_path(cache_path),
         "appearance": embedder.name,
     }
 
@@ -382,7 +382,14 @@ def make_tracker(cfg: dict[str, Any]):
 
 def load_frame_image(frame_dets: list[Detection], fallback_path: Path) -> np.ndarray:
     path = resolve_project_path(frame_dets[0].row["image"]) if frame_dets else fallback_path
-    if not path.exists():
+    try:
+        path_exists = path.exists()
+    except OSError:
+        # Some historical CSVs were generated in WSL or from a symlinked data
+        # directory.  On Windows a broken/reparse path can raise instead of
+        # simply returning False; in that case use the configured image_dir.
+        path_exists = False
+    if not path_exists:
         path = fallback_path
     image = cv2.imread(str(path), cv2.IMREAD_COLOR)
     if image is None:
@@ -520,6 +527,13 @@ def maximum_internal_gap(frames: list[int]) -> int:
 def resolve_project_path(value: str | Path) -> Path:
     path = Path(value)
     return path if path.is_absolute() else PROJECT_ROOT / path
+
+
+def display_path(path: Path) -> str:
+    try:
+        return str(path.relative_to(PROJECT_ROOT))
+    except ValueError:
+        return str(path)
 
 
 def read_csv(path: Path) -> list[dict[str, str]]:

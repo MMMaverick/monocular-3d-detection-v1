@@ -1,0 +1,68 @@
+experiment:
+  name: robust_botsort_2d_rear_views_repro_local_v1
+  mode: offline
+  description: Local reproduction of the historical appearance-assisted BoT-SORT tracking for the three rear-facing cameras.
+
+inputs:
+  views:
+    rear:
+      detections_csv: D:/vggt-omega/rebuild_data_transfer_package/preprocessed/masks/rear_camera/gt2d_sam_masks.csv
+      image_dir: D:/vggt-omega/data/camera/rear_camera
+      output_name: rear_camera
+    left_rear:
+      detections_csv: D:/vggt-omega/rebuild_data_transfer_package/preprocessed/masks/left_rear_camera/gt2d_sam_masks.csv
+      image_dir: D:/vggt-omega/data/camera/left_rear_camera
+      output_name: left_rear_camera
+    right_rear:
+      detections_csv: D:/vggt-omega/rebuild_data_transfer_package/preprocessed/masks/right_rear_camera/gt2d_sam_masks.csv
+      image_dir: D:/vggt-omega/data/camera/right_rear_camera
+      output_name: right_rear_camera
+
+input_sequence:
+  first_frame: 0
+
+label_aliases:
+  VEHICLE_CAR: car
+  VEHICLE_SUV: car
+  VEHICLE_TRUCK: truck
+  VEHICLE_TRUCK_SMALL: truck
+  VEHICLE_TRAILER: truck
+  VEHICLE_BUS: bus
+  PEDESTRIAN_NORMAL: person
+  MOTOR: motorcycle
+  CYCLIST_MOTOR: motorcycle
+  BICYCLE: bicycle
+  CYCLIST_BICYCLE: bicycle
+  VEHICLE_TRIKE: motorcycle
+
+appearance:
+  type: dinov2
+  model: dinov2_vitl14
+  device: cuda
+  batch_size: 24
+  crop_size: 224
+  box_padding: 0.08
+
+tracker:
+  frame_rate: 10
+  track_high_thresh: 0.45
+  track_low_thresh: 0.08
+  new_track_thresh: 0.50
+  track_buffer: 60
+  match_thresh: 0.80
+  proximity_thresh: 0.70
+  appearance_thresh: 0.35
+  second_match_thresh: 0.50
+  unconfirmed_match_thresh: 0.70
+  min_hits: 1
+  max_obs: 100
+  fuse_first_associate: true
+  use_cmc: true
+  cmc_method: ecc
+
+track_id_remaps:
+  rear:
+    2000055: 5000022
+
+output:
+  dir: outputs/robust_botsort_2d_rear_views_repro_local_v1

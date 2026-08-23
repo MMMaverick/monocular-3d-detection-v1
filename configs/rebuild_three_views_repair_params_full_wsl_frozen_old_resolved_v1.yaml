@@ -1,0 +1,409 @@
+schema_version: 1
+experiment:
+  name: rebuild_three_views_repair_params_full_wsl_frozen_old_resolved_v1
+  mode: offline
+  status: full_three_views_using_repair_track_parameters
+scope:
+  cameras:
+  - rear
+  - left_rear
+  - right_rear
+  classes:
+    source: all_2d_gt_box_classes
+  single_view_first: true
+  multiview_enabled: false
+  track_ids: {}
+inputs:
+  annotations_dir: D:/vggt-omega/data/format_output/annotations/NV
+  views:
+    rear:
+      camera_name: rear_camera
+      image_dir: D:/vggt-omega/data/camera/rear_camera
+      track_csv: D:/mono-detect/github_release/monocular-3d-detection-v1/preprocessed/tracks/robust_botsort_hybrid_depth_v1/rear_camera/tracks.csv
+      mask_csv: outputs/rebuild_three_views_repair_params_full_wsl_repro_inputs_v1/masks_ensured/rear_camera/gt2d_sam_masks_ensured_cropped.csv
+      intrinsic: D:/vggt-omega/data/calib/rear_camera/rear_camera-intrinsic.json
+      camera_to_ego: D:/vggt-omega/data/calib/rear_camera/rear_camera-to-car_center-extrinsic.json
+    left_rear:
+      camera_name: left_rear_camera
+      image_dir: D:/vggt-omega/data/camera/left_rear_camera
+      track_csv: D:/mono-detect/github_release/monocular-3d-detection-v1/preprocessed/tracks/robust_botsort_hybrid_depth_v1/left_rear_camera/tracks.csv
+      mask_csv: outputs/rebuild_three_views_repair_params_full_wsl_repro_inputs_v1/masks_ensured/left_rear_camera/gt2d_sam_masks_ensured_cropped.csv
+      intrinsic: D:/vggt-omega/data/calib/left_rear_camera/left_rear_camera-intrinsic.json
+      camera_to_ego: D:/vggt-omega/data/calib/left_rear_camera/left_rear_camera-to-car_center-extrinsic.json
+    right_rear:
+      camera_name: right_rear_camera
+      image_dir: D:/vggt-omega/data/camera/right_rear_camera
+      track_csv: D:/mono-detect/github_release/monocular-3d-detection-v1/preprocessed/tracks/robust_botsort_hybrid_depth_v1/right_rear_camera/tracks.csv
+      mask_csv: outputs/rebuild_three_views_repair_params_full_wsl_repro_inputs_v1/masks_ensured/right_rear_camera/gt2d_sam_masks_ensured_cropped.csv
+      intrinsic: D:/vggt-omega/data/calib/right_rear_camera/right_rear_camera-intrinsic.json
+      camera_to_ego: D:/vggt-omega/data/calib/right_rear_camera/right_rear_camera-to-car_center-extrinsic.json
+coordinates:
+  optimization_frame: camera
+  size_order:
+  - length
+  - width
+  - height
+  length_unit: meter
+  quaternion_order: xyzw
+variables:
+  center_xyz:
+    scope: per_frame
+    solve_jointly_per_track: true
+  size:
+    scope: shared_per_track
+    optimize: true
+    parameterization: log
+  yaw:
+    optimize: false
+    default: parallel_to_rear_camera_in_all_views
+    reference_view: rear
+  prior_losses:
+    center: false
+    depth: false
+    size: false
+    yaw: false
+constraints:
+  upright_box:
+    enabled: true
+    up_axis: rear_reference_axes_in_current_camera
+    pitch: 0.0
+    roll: 0.0
+  ground_contact:
+    enabled: false
+    mode: fixed_track_bottom_z_from_initialization
+    optimize_bottom_z: false
+label_aliases:
+  VEHICLE_CAR: car
+  VEHICLE_SUV: car
+  VEHICLE_TRUCK: truck
+  VEHICLE_TRUCK_SMALL: truck
+  VEHICLE_TRAILER: truck
+  VEHICLE_BUS: bus
+  PEDESTRIAN_NORMAL: person
+  MOTOR: motorcycle
+  CYCLIST_MOTOR: motorcycle
+  BICYCLE: bicycle
+  CYCLIST_BICYCLE: bicycle
+  VEHICLE_TRIKE: motorcycle
+class_defaults:
+  default:
+    init_size:
+    - 4.5
+    - 1.8
+    - 1.6
+    min_size:
+    - 4.2
+    - 1.7
+    - 1.4
+    max_size:
+    - 6.5
+    - 2.5
+    - 2.4
+  car:
+    init_size:
+    - 4.5
+    - 1.8
+    - 1.6
+    min_size:
+    - 4.2
+    - 1.7
+    - 1.4
+    max_size:
+    - 6.5
+    - 2.5
+    - 2.4
+  truck:
+    init_size:
+    - 15.0
+    - 2.5
+    - 3.2
+    min_size:
+    - 12.0
+    - 2.4
+    - 2.4
+    max_size:
+    - 25.0
+    - 5.0
+    - 5.0
+  bus:
+    init_size:
+    - 11.0
+    - 2.6
+    - 3.3
+    min_size:
+    - 8.0
+    - 2.0
+    - 2.5
+    max_size:
+    - 15.0
+    - 3.5
+    - 4.2
+  person:
+    init_size:
+    - 0.8
+    - 0.8
+    - 1.7
+    min_size:
+    - 0.6
+    - 0.6
+    - 1.25
+    max_size:
+    - 1.2
+    - 1.2
+    - 2.2
+  motorcycle:
+    init_size:
+    - 2.0
+    - 0.8
+    - 1.5
+    min_size:
+    - 1.5
+    - 0.6
+    - 1.1
+    max_size:
+    - 3.0
+    - 1.2
+    - 2.0
+  bicycle:
+    init_size:
+    - 1.8
+    - 0.6
+    - 1.5
+    min_size:
+    - 1.35
+    - 0.45
+    - 1.1
+    max_size:
+    - 2.5
+    - 1.0
+    - 2.0
+observations:
+  supporting_edges:
+    enabled: true
+    weight: 400.0
+    normalization: box_width
+    edge_selection: hard_leftmost_rightmost_vertical_edge
+    truncation_margin_px: 8.0
+    track_level_truncation:
+      enabled: true
+      expand_margin_px: 12.0
+      stop_margin_px: 24.0
+      max_frame_gap: 3
+      size_anomaly_near_border:
+        enabled: true
+        reference_percentile: 90.0
+        min_reference_area_px: 20000.0
+        near_border_margin_px: 96.0
+        max_area_ratio_to_reference: 0.25
+        max_width_ratio_to_reference: 0.5
+        max_height_ratio_to_reference: 0.5
+        min_size_evidence_count: 1
+  bbox_fit:
+    enabled: true
+    weight: 1.0
+    rear_multiplier: 3.0
+    far_multiplier: 3.0
+    far_start_m: 35.0
+    normalization: box_width_height
+    gate_by: initial_distance
+    vertical_truncation_mode: one_sided
+  mask:
+    enabled: true
+    use_foreground_points: true
+    point_sample_mode: foreground_pixels
+    contain_weight: 1000.0
+    contain_reduction: mean
+    oversize_weight: 0.002
+    oversize_max_area_ratio: 0.0
+    max_foreground_points: 512
+    fallback_to_mask_bbox: false
+  depth:
+    enabled: true
+    role: initialization_only
+    initialization_mode: da3
+    height_prior_replace_da3_beyond_m: 0.0
+    initial_center_override_csv: ''
+  depth_safety:
+    enabled: false
+    mode: min_corner_distance_to_camera
+    min_corner_distance_m: 0.2
+    min_corner_depth_m: 0.75
+    weight: 100.0
+  ego_box_safety:
+    enabled: true
+    weight: 500.0
+    ego_size:
+    - 4.8
+    - 2.0
+    - 1.6
+    ego_center:
+    - 0.0
+    - 0.0
+    - 0.8
+    margin_m: 0.2
+  top_bottom_edges:
+    enabled: true
+    weight: 100.0
+    far_start_m: 10.0
+    gate_by: initial_distance
+    one_sided_vertical_truncation: true
+  size_ratio_prior:
+    enabled: true
+    weight: 1.0
+    mode: log_shape_ratio
+  class_size_prior:
+    enabled: true
+    weight: 100.0
+    mode: log_hinge
+    max_log_deviation:
+    - 0.45
+    - 0.35
+    - 0.35
+  height_depth_prior:
+    enabled: false
+    weight: 100.0
+    mode: log_hinge
+    height_source: class_init
+    max_log_depth_deviation: 0.25
+    exclude_truncated_vertical: true
+    far_start_m: 0.0
+  ground_plane:
+    enabled: true
+    camera_height_m: 0.8
+    camera_height_m_by_view:
+      rear: 0.6
+    distance_decay:
+      enabled: true
+      distance_source: initial_camera_distance
+      near_m: 8.0
+      far_m: 35.0
+      min_multiplier: 0.1
+      mode: smoothstep
+    weight: 5.0
+    mode: bottom_corners_to_ground_plane
+  projection:
+    min_depth_m: 0.2
+    clip_loss_to_image: true
+  no_mask_frames:
+    mode: edge_only
+  size_update:
+    mode: reliable_mask_untruncated_only
+    exclude_truncated: true
+    fallback_to_mask_frames_when_no_reliable: true
+    fallback_size_gradient_scale: 0.25
+  temporal:
+    enabled: false
+  ground:
+    enabled: false
+  point_cloud:
+    enabled: false
+  multiview:
+    enabled: false
+  temporal_smoothness:
+    enabled: true
+    max_gap_frames: 3
+    acceleration:
+      enabled: true
+      lateral_weight: 100.0
+      forward_weight: 50.0
+      vertical_weight: 100.0
+      robust_delta_m: 1.0
+    log_depth_acceleration:
+      enabled: true
+      weight: 100.0
+      robust_delta_log_depth: 0.08
+  center_depth_safety:
+    enabled: false
+    weight: 200.0
+    default_min_center_depth_m: 0.0
+    min_center_depth_m:
+      car: 1.0
+      truck: 2.0
+      bus: 2.0
+      motorcycle: 0.5
+      bicycle: 0.5
+      person: 0.5
+weighting:
+  near_observation_size_influence:
+    enabled: true
+    distance_measure: initialized_3d_euclidean_distance_to_camera
+    near_threshold: 15.0
+    far_threshold: 60.0
+    near_multiplier: 2.0
+    minimum_weight: 1.0
+solver:
+  device: cuda
+  framework: pytorch
+  algorithm: adam
+  dtype: float32
+  learning_rate: 0.1
+  max_iterations: 3000
+  gradient_clip: 10.0
+  scheduler:
+    enabled: true
+    type: exponential
+    gamma: 0.98
+    step_size: 25
+    minimum_learning_rate: 0.0001
+  weight_decay: 0.0
+  min_track_frames: 3
+  max_tracks_per_view: 0
+  track_parallel:
+    enabled: true
+    workers: 4
+  convergence:
+    enabled: true
+    min_iterations: 2000
+    patience: 1000
+    check_every: 100
+    relative_improvement: 1.0e-05
+    absolute_improvement: 0.1
+    safety_max_iterations: 2000
+  progress_interval: 100
+fallback:
+  accept_partial_track: true
+  revert_failed_frames: false
+  revert_failed_track: false
+  failure_diagnostics:
+    per_frame_loss_values: true
+    per_loss_breakdown: true
+    identify_failed_loss_term: true
+output:
+  dir: outputs/rebuild_three_views_repair_params_full_wsl_frozen_old_resolved_v1
+  resolved_config: true
+  copy_source_config: true
+  per_residual_diagnostics: true
+  per_frame_loss_diagnostics: true
+  videos: true
+  video:
+    enabled: true
+    fps: 10.0
+    draw_3d_box: true
+    draw_2d_box: true
+    box_2d_thickness: 1
+    draw_support_edges: false
+    draw_mask_pixels: true
+    draw_corner_points: false
+    draw_corner_labels: false
+    draw_center_projection: false
+    draw_box_dimensions: false
+    box_dimensions_font_scale: 0.62
+    box_dimensions_thickness: 2
+    draw_loss_panel: false
+    mask_alpha: 0.35
+    max_frames_per_view: 0
+    debug_geometry_style: false
+    draw_projected_bbox: false
+    draw_bev: true
+    bev_width_px: 560
+    bev_max_depth_m: 0
+    bev_half_width_m: 0
+    loss_panel_font_scale: 0.62
+    loss_panel_thickness: 2
+    loss_panel_line_height: 24
+    loss_panel_width: 1700
+    loss_panel_mode: full
+    draw_ego_box: true
+    bev_min_depth_m: -5.0
+_config_path: configs/rebuild_three_views_repair_params_full_wsl_v1.yaml
+_root_dir: /mnt/d/mono-detect

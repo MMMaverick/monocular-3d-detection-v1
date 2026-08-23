@@ -147,7 +147,7 @@ def load_and_crop_sam_mask(config: dict[str, Any], mask_row: dict[str, str], tra
     path_text = mask_row.get("mask_path", "")
     if not path_text:
         return None
-    path = resolve_path(config, path_text)
+    path = resolve_existing_path(config, path_text)
     if not path.exists():
         return None
     raw = cv2.imread(str(path), cv2.IMREAD_GRAYSCALE)
@@ -225,11 +225,44 @@ def read_image_shape(config: dict[str, Any], track_row: dict[str, str], cv2) -> 
     image = track_row.get("image", "")
     if not image:
         return None
-    path = resolve_path(config, image)
+    path = resolve_existing_path(config, image)
     frame = cv2.imread(str(path), cv2.IMREAD_GRAYSCALE)
     if frame is None:
         return None
     return frame.shape[:2]
+
+
+def resolve_existing_path(config: dict[str, Any], value: str) -> Path:
+    """Resolve historical Windows/WSL relative paths used by transferred data.
+
+    Some local reproduction CSVs contain paths such as ``data/camera/...`` or
+    ``preprocessed/masks/...`` from the original workspace.  The current project
+    root may not contain those folders, so try the preserved source package too.
+    """
+    path = resolve_path(config, value)
+    try:
+        if path.exists():
+            return path
+    except OSError:
+        pass
+    text = str(value).replace("\\", "/")
+    fallbacks: list[Path] = []
+    if text.startswith("data/"):
+        fallbacks.append(Path("D:/vggt-omega") / text)
+        fallbacks.append(Path("D:/vggt-omega/rebuild_data_transfer_package") / text)
+    if text.startswith("preprocessed/masks/"):
+        fallbacks.append(Path("D:/vggt-omega/rebuild_data_transfer_package") / text)
+    if text.startswith("/mnt/d/mono-detect/data/"):
+        fallbacks.append(Path("D:/vggt-omega/data") / text.split("/mnt/d/mono-detect/data/", 1)[1])
+    if text.startswith("/mnt/d/mono-detect/preprocessed/masks/"):
+        fallbacks.append(Path("D:/vggt-omega/rebuild_data_transfer_package/preprocessed/masks") / text.split("/mnt/d/mono-detect/preprocessed/masks/", 1)[1])
+    for candidate in fallbacks:
+        try:
+            if candidate.exists():
+                return candidate
+        except OSError:
+            continue
+    return path
 
 
 def mask_bbox(mask: np.ndarray) -> tuple[int, int, int, int]:

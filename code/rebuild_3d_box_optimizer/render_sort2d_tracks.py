@@ -47,8 +47,9 @@ def render_view(config: dict[str, Any], view: str, out_dir: Path, cv2, fps: floa
     video_path = out_dir / f"{camera_name}_sort2d_tracks.mp4"
     writer = None
     try:
-        for (_, image_text), frame_rows in groups.items():
-            image_path = resolve_path(config, image_text)
+        image_paths = list_frame_images(resolve_path(config, view_cfg["image_dir"])) if "image_dir" in view_cfg else []
+        for (frame, image_text), frame_rows in groups.items():
+            image_path = resolve_image_path(config, image_text, image_paths, frame)
             image = cv2.imread(str(image_path), cv2.IMREAD_COLOR)
             if image is None:
                 continue
@@ -115,7 +116,28 @@ def group_frame_rows(rows: list[dict[str, str]]) -> dict[tuple[int, str], list[d
     return ordered
 
 
+def resolve_image_path(config: dict[str, Any], image_text: str, fallback_images: list[Path], frame: int) -> Path:
+    try:
+        path = resolve_path(config, image_text)
+        path_exists = path.exists()
+    except (OSError, ValueError):
+        path_exists = False
+        path = Path(image_text)
+    if path_exists:
+        return path
+    if 0 <= frame < len(fallback_images):
+        return fallback_images[frame]
+    return path
+
+
+def list_frame_images(image_dir: Path) -> list[Path]:
+    extensions = {".jpg", ".jpeg", ".png", ".bmp", ".webp"}
+    return sorted(path for path in image_dir.iterdir() if path.is_file() and path.suffix.lower() in extensions)
+
+
 def color_for_track(track_id: int) -> tuple[int, int, int]:
+    if track_id < 0:
+        return 128, 128, 128
     rng = np.random.default_rng(track_id * 9973 + 17)
     vals = rng.integers(80, 255, size=3)
     return int(vals[0]), int(vals[1]), int(vals[2])

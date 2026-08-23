@@ -1,0 +1,17 @@
+scope:
+  cameras: [rear, left_rear, right_rear]
+
+inputs:
+  views:
+    rear:
+      camera_name: rear_camera
+      image_dir: D:/vggt-omega/data/camera/rear_camera
+      track_csv: outputs/robust_botsort_2d_rear_views_repro_local_v1/rear_camera/tracks.csv
+    left_rear:
+      camera_name: left_rear_camera
+      image_dir: D:/vggt-omega/data/camera/left_rear_camera
+      track_csv: outputs/robust_botsort_2d_rear_views_repro_local_v1/left_rear_camera/tracks.csv
+    right_rear:
+      camera_name: right_rear_camera
+      image_dir: D:/vggt-omega/data/camera/right_rear_camera
+      track_csv: outputs/robust_botsort_2d_rear_views_repro_local_v1/right_rear_camera/tracks.csv

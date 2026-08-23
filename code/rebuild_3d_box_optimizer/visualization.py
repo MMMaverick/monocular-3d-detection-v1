@@ -82,7 +82,11 @@ def render_view_video(config: dict[str, Any], rows: list[dict[str, str]], video_
         for frame_rows in frame_groups:
             row = frame_rows[0]
             image_path = resolve_data_path(config, row.get("image", ""))
-            if not image_path.exists():
+            try:
+                image_exists = image_path.exists()
+            except OSError:
+                image_exists = False
+            if not image_exists:
                 continue
             image = cv2.imread(str(image_path), cv2.IMREAD_COLOR)
             if image is None:
@@ -133,7 +137,11 @@ def draw_mask_overlay(config: dict[str, Any], image: np.ndarray, row: dict[str, 
     if not mask_path_text:
         return
     mask_path = resolve_data_path(config, mask_path_text)
-    if not mask_path.exists():
+    try:
+        mask_exists = mask_path.exists()
+    except OSError:
+        mask_exists = False
+    if not mask_exists:
         return
     mask = cv2.imread(str(mask_path), cv2.IMREAD_GRAYSCALE)
     if mask is None:
@@ -720,7 +728,30 @@ def color_for_track(track_id: int, kind: str) -> tuple[int, int, int]:
 def resolve_data_path(config: dict[str, Any], value: str) -> Path:
     if not value:
         return Path("")
-    return resolve_path(config, value.replace("\\", "/"))
+    text = value.replace("\\", "/")
+    path = resolve_path(config, text)
+    try:
+        if path.exists():
+            return path
+    except OSError:
+        pass
+    fallbacks: list[Path] = []
+    if text.startswith("data/"):
+        fallbacks.append(Path("D:/vggt-omega") / text)
+        fallbacks.append(Path("D:/vggt-omega/rebuild_data_transfer_package") / text)
+    if text.startswith("preprocessed/masks/"):
+        fallbacks.append(Path("D:/vggt-omega/rebuild_data_transfer_package") / text)
+    if text.startswith("/mnt/d/mono-detect/data/"):
+        fallbacks.append(Path("D:/vggt-omega/data") / text.split("/mnt/d/mono-detect/data/", 1)[1])
+    if text.startswith("/mnt/d/mono-detect/preprocessed/masks/"):
+        fallbacks.append(Path("D:/vggt-omega/rebuild_data_transfer_package/preprocessed/masks") / text.split("/mnt/d/mono-detect/preprocessed/masks/", 1)[1])
+    for candidate in fallbacks:
+        try:
+            if candidate.exists():
+                return candidate
+        except OSError:
+            continue
+    return path
 
 
 def safe_float(value: str | None) -> float:
