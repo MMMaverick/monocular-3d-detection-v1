@@ -1,0 +1,70 @@
+schema_version: 1
+
+pipeline:
+  name: original_2dbox_full_smoke_gpu_v1
+  output_root: outputs/original_2dbox_full_smoke_gpu_v1
+  use_existing_2d_boxes: true
+  run_detection: false
+
+data:
+  annotation_dir: format_output/annotations/NV
+  camera_root: camera
+  calib_root: calib
+  cameras: rear_camera,left_rear_camera,right_rear_camera
+
+runtime:
+  device: cuda
+  fps: 2
+  max_frames: 1
+
+sam:
+  enabled: true
+  implementation: classic_sam
+  checkpoint: checkpoints/sam_vit_h_4b8939.pth
+  model_type: vit_h
+  box_scale: 1.5
+  positive_points: 1
+  clip_mask_to_original_box: true
+  mask_format: png
+  min_2d_score: 0.0
+
+depth:
+  enabled: true
+  implementation: da3_metric
+  da3_root: third_party/Depth-Anything-3
+  model_dir: third_party/Depth-Anything-3/checkpoints/da3metric-large
+  process_res: 224
+  chunk_size: 1
+  stride: 1
+
+tracking:
+  enabled: true
+  render_video: false
+  sort:
+    class_aware: false
+    start_track_id: 1
+    min_hits: 1
+    max_age: 2
+    process_noise: 10.0
+    measurement_noise: 25.0
+    iou_weight: 1.0
+    center_weight: 0.25
+    size_weight: 0.10
+    min_iou: 0.05
+    center_gate: 1.75
+    max_cost: 2.0
+
+masks:
+  ensure_for_every_track_box: true
+  min_iou: 0.30
+  allow_label_mismatch: false
+
+optimization_3d:
+  enabled: true
+  device: cuda
+  max_iterations: 1
+  workers: 1
+  learning_rate: 0.01
+  render_video: false
+  output_videos: false
+  initialization_mode: da3

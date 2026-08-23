@@ -1,0 +1,95 @@
+schema_version: 1
+
+pipeline:
+  name: original_2dbox_full_sam_da3_3dbox_v1
+
+  # 留空时输出到 <repo>/outputs/<scene_name>_original_2dbox_full_v1
+  output_root: ""
+
+  # 输入原数据里已有的 2D box，不做目标检测。
+  use_existing_2d_boxes: true
+  run_detection: false
+
+data:
+  annotation_dir: format_output/annotations/NV
+  camera_root: camera
+  calib_root: calib
+  cameras: rear_camera,left_rear_camera,right_rear_camera
+
+runtime:
+  device: cpu
+  fps: 10
+  max_frames: -1
+
+sam:
+  enabled: true
+  implementation: classic_sam
+  checkpoint: checkpoints/sam_vit_h_4b8939.pth
+  model_type: vit_h
+  box_scale: 1.5
+  positive_points: 5
+  clip_mask_to_original_box: true
+  mask_format: png
+  min_2d_score: 0.0
+
+depth:
+  enabled: true
+  implementation: da3_metric
+  da3_root: third_party/Depth-Anything-3
+  model_dir: third_party/Depth-Anything-3/checkpoints/da3metric-large
+  process_res: 336
+  chunk_size: 20
+  stride: 1
+
+tracking:
+  enabled: true
+  render_video: true
+  thickness: 1
+  sort:
+    # 不跨类别追踪；track 的类别由 track 内多数帧决定。
+    class_aware: false
+    start_track_id: 1
+    min_hits: 1
+    max_age: 6
+    process_noise: 10.0
+    measurement_noise: 25.0
+    iou_weight: 1.0
+    center_weight: 0.25
+    size_weight: 0.10
+    min_iou: 0.05
+    center_gate: 1.75
+    max_cost: 2.0
+
+masks:
+  ensure_for_every_track_box: true
+  min_iou: 0.30
+  allow_label_mismatch: false
+
+optimization_3d:
+  enabled: true
+  device: cpu
+  max_iterations: 3000
+  workers: 4
+  learning_rate: 0.01
+  render_video: true
+  output_videos: true
+
+  # 使用 DA3 初始化；如果某些行没有 depth，会自动回退 height prior。
+  initialization_mode: da3
+
+  losses:
+    supporting_edges_weight: 400.0
+    truncation_margin_px: 8.0
+    mask_contain_weight: 1000.0
+    mask_oversize_weight: 0.002
+    class_size_prior_enabled: true
+    class_size_prior_weight: 100.0
+    size_ratio_prior_enabled: true
+    size_ratio_prior_weight: 1.0
+    ground_plane_enabled: true
+    ground_plane_weight: 5.0
+    camera_height_m: 0.5
+    top_bottom_edges_enabled: true
+    top_bottom_edges_weight: 100.0
+    top_bottom_edges_far_start_m: 10.0
+    temporal_smoothness_enabled: true
