@@ -1,90 +1,99 @@
 # monocular-3d-detection-v1
 
-这是一个离线 monocular / surround-view 3D box 重建实验工程。当前主线流程是：
+Monocular / surround-view 3D box reconstruction experiments for rear, left-rear, and right-rear cameras.
 
-1. 已有 2D track / mask / depth 初始化 / 标定输入；
-2. 分别在 `rear`、`left_rear`、`right_rear` 三个视角内做单视角 3D box 轨迹优化；
-3. 使用 LoMa/外观/极线几何把不同视角的同一辆车合成 `global_track_id`；
-4. 基于单视角优化结果，对同一个 `global_track_id` 做跨视角联合后优化；
-5. 输出 CSV 和视频可视化。
+> 当前推荐入口：请先看
+> [`documentation/current_multiview_3d_pipeline_cn.md`](documentation/current_multiview_3d_pipeline_cn.md)。
+> 该文档记录目前正在使用的“单视角优化 → LoMa 跨视角匹配 → 跨视角联合后优化”主线流程。
 
-更详细的中文流程说明见：
+The current main pipeline is a two-stage offline baseline:
 
-```text
-documentation/current_multiview_3d_pipeline_cn.md
-```
+1. associate single-view tracks across `rear`, `left_rear`, and `right_rear`;
+2. jointly optimize each global track in world coordinates, sharing one 3D size and one world trajectory across all matched camera observations.
 
-## 1. 这个 GitHub 包里有什么
+Yaw is currently fixed to the rear-camera / ego-motion reference direction. The box is upright; pitch and roll are not optimized.
 
-包含：
+## 原始三路后视数据：新机器部署入口
 
-```text
-code/                         核心 Python 代码
-configs/                      当前主线配置和通用配置
-documentation/                中文流程文档
-scripts/                      Ubuntu/WSL 启动脚本和可视化脚本
-environment-ubuntu-gpu.yml    Ubuntu GPU 环境参考
-environment-original-2dbox-full-cpu.yml  CPU 环境参考
-```
-
-不包含：
+本节针对项目最初的三路后视数据，不针对 Waymo。这里的三路相机是：
 
 ```text
-data/             原始图像、标定、场景数据
-preprocessed/     2D track、mask、depth 初始化等中间结果
-outputs/          实验输出、视频、日志
-checkpoints/      SAM / Depth Anything / LoMa / YOLO 等模型权重
-external/LoMa     LoMa 外部仓库代码
-third_party/      SAM、Depth Anything 等外部仓库
+rear_camera
+left_rear_camera
+right_rear_camera
 ```
 
-这些目录在仓库中只保留空目录占位，需要你下载或手动拷贝。
-
-## 2. Ubuntu 环境配置
-
-我们在 WSL Ubuntu 上测试过当前流程。推荐新机器使用 Miniforge/Conda。
-
-### 2.1 安装 Miniforge
-
-如果机器上没有 conda：
-
-```bash
-cd ~
-wget https://github.com/conda-forge/miniforge/releases/latest/download/Miniforge3-Linux-x86_64.sh
-bash Miniforge3-Linux-x86_64.sh
-source ~/miniforge3/etc/profile.d/conda.sh
-```
-
-如果你安装到了别的位置，后面运行脚本时可以设置：
-
-```bash
-export CONDA_SH=/your/miniforge3/etc/profile.d/conda.sh
-```
-
-项目自带脚本默认先找：
+当前原始数据端到端流程默认不运行 YOLO 或其他 detector。输入假设已经有逐帧 2D box annotation：
 
 ```text
-/opt/miniforge3/etc/profile.d/conda.sh
+<scene_data>/format_output/annotations/NV/*.json
 ```
 
-### 2.2 创建 GPU 环境
+如果新数据只有图片、没有 2D box，需要先在项目外部跑检测器，并导出等价的逐帧 2D box CSV。项目内部负责从已有 2D box 生成 mask、depth、稳定 2D track，以及后续 3D box 优化。
+
+### 1. 目录结构
+
+新机器上建议把仓库和数据保持成下面的结构：
+
+```text
+monocular-3d-detection-v1/
+  code/
+  configs/
+  scripts/
+  checkpoints/
+    sam_vit_h_4b8939.pth
+  third_party/
+    segment_anything/
+    Depth-Anything-3/
+      checkpoints/
+        da3metric-large/
+  external/
+    LoMa/
+
+<scene_data>/
+  camera/
+    rear_camera/*.jpg
+    left_rear_camera/*.jpg
+    right_rear_camera/*.jpg
+  calib/
+    rear_camera/
+      rear_camera-intrinsic.json
+      rear_camera-to-car_center-extrinsic.json
+    left_rear_camera/
+      left_rear_camera-intrinsic.json
+      left_rear_camera-to-car_center-extrinsic.json
+    right_rear_camera/
+      right_rear_camera-intrinsic.json
+      right_rear_camera-to-car_center-extrinsic.json
+  format_output/
+    annotations/
+      NV/*.json
+```
+
+外参文件名里的 `camera-to-car_center` 表示：
+
+```text
+P_car = T_camera_to_car @ P_camera
+```
+
+### 2. 环境安装
+
+推荐使用 WSL Ubuntu + Miniforge/Conda。CPU 环境可直接用仓库里的文件创建：
 
 ```bash
 cd /path/to/monocular-3d-detection-v1
-conda env create -f environment-ubuntu-gpu.yml
-conda activate mono-detect-original-2dbox-full-gpu
+conda env create -f environment-original-2dbox-full-cpu.yml
+conda activate mono-detect-original-2dbox-full-cpu
 ```
 
-安装 CUDA 版 PyTorch。当前 WSL 测试用的是 CUDA 12.8 对应的 PyTorch wheel；Ubuntu 新机器建议根据实际 NVIDIA driver 选择版本。若使用 CUDA 12.8：
+如果要跑全量 SAM / DA3 / 3D 优化，建议使用 GPU。当前根目录没有单独维护 GPU yml，可以先创建 CPU 环境，再替换安装 CUDA 版 PyTorch。例如 CUDA 12.8：
 
 ```bash
-pip install torch torchvision --index-url https://download.pytorch.org/whl/cu128
+pip install --force-reinstall torch torchvision --index-url https://download.pytorch.org/whl/cu128
 pip install --force-reinstall --no-deps numpy==1.26.4
 ```
 
-第二行是必要的：部分 PyTorch/torchvision wheel 会把 numpy 升到 2.x；当前代码和 OpenCV 组合按 `numpy==1.26.4` 测试。
-
-验证：
+验证 CUDA：
 
 ```bash
 python - <<'PY'
@@ -96,72 +105,39 @@ if torch.cuda.is_available():
 PY
 ```
 
-如果只想先 CPU 检查代码：
+项目运行时通常需要：
 
 ```bash
-conda env create -f environment-original-2dbox-full-cpu.yml
-conda activate mono-detect-original-2dbox-full-cpu
+export PYTHONPATH="$(pwd)/code:${PYTHONPATH:-}"
 ```
 
-CPU 可以跑小样本和可视化，但全量 3D 优化会很慢。
+### 3. 外部代码和权重
 
-## 3. 外部代码和模型权重放置
+#### 3.1 SAM
 
-### 3.1 LoMa
-
-跨视角 2D track 匹配需要 LoMa。放到：
-
-```text
-external/LoMa
-```
-
-示例：
+用于从 2D box 生成前景 mask。
 
 ```bash
 cd /path/to/monocular-3d-detection-v1
-mkdir -p external
-git clone https://github.com/davnords/LoMa.git external/LoMa
-```
-
-如果 LoMa 需要额外模型权重，请按 LoMa 官方 README 下载，并放在 LoMa 默认查找的位置，或在 `configs/loma_global_2d_repair_params_tracks_v1.yaml` 中修改。
-
-### 3.2 SAM / Depth Anything / 其他权重
-
-本项目支持两种运行方式：
-
-1. **已有预处理结果模式**：已经有 2D track、mask、depth 初始化 CSV，直接进入 3D box 优化和跨视角联合优化。
-2. **原始 2D box 端到端模式**：原始数据里只有 annotation JSON 中的 2D box，需要先跑 SAM 生成 mask、跑 DA3 生成 depth，再做 2D tracking 和 3D box 优化。
-
-如果使用第 2 种模式，需要额外放置这些外部仓库和权重：
-
-```text
-third_party/segment_anything/
-third_party/Depth-Anything-3/
-checkpoints/
-```
-
-当前代码默认读取：
-
-```text
-checkpoints/
-  sam_vit_h_4b8939.pth
-
-third_party/Depth-Anything-3/checkpoints/
-  da3metric-large/
-```
-
-下载示例：
-
-```bash
-cd /path/to/monocular-3d-detection-v1
-
 mkdir -p third_party checkpoints
 git clone https://github.com/facebookresearch/segment-anything.git third_party/segment_anything
-git clone https://github.com/DepthAnything/Depth-Anything-3.git third_party/Depth-Anything-3
-
 wget -O checkpoints/sam_vit_h_4b8939.pth \
   https://dl.fbaipublicfiles.com/segment_anything/sam_vit_h_4b8939.pth
+```
 
+默认配置读取：
+
+```text
+checkpoints/sam_vit_h_4b8939.pth
+```
+
+#### 3.2 Depth Anything 3 Metric
+
+用于为每个相机生成 metric depth，再绑定到 2D track 作为 3D 初始化深度来源。
+
+```bash
+cd /path/to/monocular-3d-detection-v1
+git clone https://github.com/DepthAnything/Depth-Anything-3.git third_party/Depth-Anything-3
 pip install -U huggingface_hub
 mkdir -p third_party/Depth-Anything-3/checkpoints/da3metric-large
 huggingface-cli download depth-anything/DA3METRIC-LARGE \
@@ -176,149 +152,146 @@ huggingface-cli download depth-anything/DA3METRIC-LARGE \
   --local-dir third_party/Depth-Anything-3/checkpoints/da3metric-large
 ```
 
-由于权重体积大且授权各不相同，本仓库不提交权重。建议优先从官方地址下载；如果网络不稳定，也可以手动拷贝 `checkpoints/` 和 `third_party/Depth-Anything-3/checkpoints/`。
-
-## 4. 数据和预处理结果放置
-
-当前配置默认读取以下路径。新机器上需要保持相同相对目录，或修改配置文件。
-
-### 4.1 图像
+默认配置读取：
 
 ```text
-data/camera/rear_camera/*.jpg
-data/camera/left_rear_camera/*.jpg
-data/camera/right_rear_camera/*.jpg
+third_party/Depth-Anything-3/checkpoints/da3metric-large
 ```
 
-### 4.2 标定
+#### 3.3 LoMa
 
-```text
-data/calib/rear_camera/rear_camera-intrinsic.json
-data/calib/rear_camera/rear_camera-to-car_center-extrinsic.json
-
-data/calib/left_rear_camera/left_rear_camera-intrinsic.json
-data/calib/left_rear_camera/left_rear_camera-to-car_center-extrinsic.json
-
-data/calib/right_rear_camera/right_rear_camera-intrinsic.json
-data/calib/right_rear_camera/right_rear_camera-to-car_center-extrinsic.json
-```
-
-外参文件名里的 `camera-to-car_center` 表示：
-
-```text
-P_car = T_camera_to_car @ P_camera
-```
-
-渲染/投影到相机时会使用反方向变换。
-
-### 4.3 2D track + depth 初始化
-
-```text
-preprocessed/tracks/robust_botsort_hybrid_depth_v1/rear_camera/tracks_hybrid_depth.csv
-preprocessed/tracks/robust_botsort_hybrid_depth_v1/left_rear_camera/tracks_hybrid_depth.csv
-preprocessed/tracks/robust_botsort_hybrid_depth_v1/right_rear_camera/tracks_hybrid_depth.csv
-```
-
-这些 CSV 应至少包含：
-
-- `frame`
-- `timestamp`
-- `track_id`
-- `x1, y1, x2, y2`
-- 类别字段，例如 `class_name`
-- 图像路径字段
-- depth / 3D 初始化相关字段，具体以当前代码读取为准
-
-### 4.4 mask / detection CSV
-
-单视角 3D 优化当前默认使用 ensured/cropped mask：
-
-```text
-preprocessed/masks_robust_botsort_ensured_v1/rear_camera/gt2d_sam_masks_ensured_cropped.csv
-preprocessed/masks_robust_botsort_ensured_v1/left_rear_camera/gt2d_sam_masks_ensured_cropped.csv
-preprocessed/masks_robust_botsort_ensured_v1/right_rear_camera/gt2d_sam_masks_ensured_cropped.csv
-```
-
-LoMa/外观匹配配置中还会读取 detection/mask CSV：
-
-```text
-preprocessed/masks/rear_camera/gt2d_sam_masks.csv
-preprocessed/masks/left_rear_camera/gt2d_sam_masks.csv
-preprocessed/masks/right_rear_camera/gt2d_sam_masks.csv
-```
-
-mask 图像建议放在：
-
-```text
-preprocessed/masks_robust_botsort_ensured_v1/rear_camera/masks/
-preprocessed/masks_robust_botsort_ensured_v1/left_rear_camera/masks/
-preprocessed/masks_robust_botsort_ensured_v1/right_rear_camera/masks/
-
-preprocessed/masks/rear_camera/masks/
-preprocessed/masks/left_rear_camera/masks/
-preprocessed/masks/right_rear_camera/masks/
-```
-
-CSV 中的 `mask_path` 可以是相对仓库根目录的路径。
-
-### 4.5 LoMa/外观匹配需要的 detection embedding
-
-当前 LoMa 配置默认读取：
-
-```text
-outputs/robust_botsort_2d_rear_views/rear_camera/detection_embeddings.npz
-outputs/robust_botsort_2d_rear_views/left_rear_camera/detection_embeddings.npz
-outputs/robust_botsort_2d_rear_views/right_rear_camera/detection_embeddings.npz
-```
-
-虽然路径在 `outputs/` 下，但它是 LoMa 匹配阶段的输入缓存。你可以：
-
-1. 手动把已有缓存拷贝到上述路径；
-2. 或者修改 `configs/loma_global_2d_repair_params_tracks_v1.yaml` 中的 `embedding_cache` 路径。
-
-## 5. 运行主线流程
-
-先进入仓库并激活环境：
+用于后续跨视角 2D track 匹配，把不同相机里的同一目标合成 global track。
 
 ```bash
 cd /path/to/monocular-3d-detection-v1
-source /opt/miniforge3/etc/profile.d/conda.sh
-conda activate mono-detect-original-2dbox-full-gpu
+mkdir -p external
+git clone https://github.com/davnords/LoMa.git external/LoMa
 ```
 
-如果 conda 安装在别处：
-
-```bash
-export CONDA_SH=~/miniforge3/etc/profile.d/conda.sh
-```
-
-### 5.1 可选前处理：从原始 2D box 生成 mask / depth / track
-
-如果你的输入是原始场景数据，且里面已经有 2D box annotation，但还没有 mask、DA3 depth、2D track，则先跑这一段。
-
-原始数据目录需要包含：
+如果 LoMa 需要额外权重，请按 LoMa 官方 README 放到其默认路径，或修改：
 
 ```text
-data/
-  camera/
-    rear_camera/
-    left_rear_camera/
-    right_rear_camera/
-  calib/
-    rear_camera/
-    left_rear_camera/
-    right_rear_camera/
-  format_output/annotations/NV/
+configs/loma_global_2d_repair_params_tracks_v1.yaml
 ```
 
-其中 `format_output/annotations/NV/*.json` 是原始 2D box 来源；本流程不会跑目标检测。
+### 4. 2D box 到 2D track 的实际流程
 
-一键运行：
+原始数据流程的“检测到追踪”更准确地说是“已有 2D annotation 到稳定 2D track”：
+
+```text
+annotation JSON
+  ↓
+scripts/export_original_2dbox_csv.py
+  ↓
+outputs/original_2dbox_full_*/tracking_input/<camera>/tracks.csv
+  # 注意：这里虽然叫 tracks.csv，但此时仍是逐帧 2D box，不是稳定 tracking
+  ↓
+python -m rebuild_3d_box_optimizer.retrack_sort_2d
+  ↓
+outputs/original_2dbox_full_*/tracking/sort2d_tracks/<camera>/tracks.csv
+  # 这里才是重新追踪后的 2D track，包含稳定 track_id
+```
+
+如果手动执行导出：
+
+```bash
+python scripts/export_original_2dbox_csv.py \
+  --annotations /path/to/scene_data/format_output/annotations/NV \
+  --camera-root /path/to/scene_data/camera \
+  --cameras rear_camera,left_rear_camera,right_rear_camera \
+  --output-root outputs/original_2dbox_full_gpu_v1/tracking_input \
+  --max-frames -1
+```
+
+2D SORT 追踪入口：
+
+```bash
+python -m rebuild_3d_box_optimizer.retrack_sort_2d \
+  --config outputs/original_2dbox_full_gpu_v1/configs/retrack_sort_2d.yaml
+```
+
+追踪器是项目内自写的 SORT-lite，不依赖 YOLO / SAM / DA3。状态量是：
+
+```text
+cx, cy, w, h, vx, vy, vw, vh
+```
+
+每帧会先用 Kalman 预测，再用 Hungarian assignment 匹配 detection 和已有 track。匹配代价为：
+
+```text
+cost = iou_weight * (1 - IoU)
+     + center_weight * normalized_center_distance
+     + size_weight * normalized_size_change
+```
+
+推荐追踪参数：
+
+```yaml
+tracking:
+  sort:
+    # 如果原始 label 不稳定，推荐设为 false：
+    # tracking 不按类别硬切开，track 类别由多数帧投票决定。
+    class_aware: false
+    start_track_id: 1
+    min_hits: 1
+    max_age: 6
+    process_noise: 10.0
+    measurement_noise: 25.0
+    iou_weight: 1.0
+    center_weight: 0.25
+    size_weight: 0.10
+    min_iou: 0.05
+    center_gate: 1.75
+    max_cost: 2.0
+```
+
+说明：
+
+- `class_aware: false`：类别不参与匹配，避免同一辆车因为单帧 label 错误被拆成多个 track；
+- `track_majority_label`：追踪结束后按整个 track 的多数帧类别确定最终类别；
+- `max_age`：目标短暂遮挡或漏检时可保活的帧数；
+- `min_iou` 和 `center_gate`：允许 IoU 或中心距离任一条件进入候选；
+- `max_cost`：最终匹配代价上限，防止完全不相关的框被硬连。
+
+追踪输出会保留原始 detection 行，并新增/覆盖：
+
+```text
+track_id                  新的稳定 2D track id
+source_track_id           原始 annotation/detection 中的 id，如果有
+raw_label                 当前帧原始类别
+raw_canonical_label       当前帧映射后的类别
+track_majority_label      当前 track 多数帧类别
+track_majority_raw_label  当前 track 多数帧原始类别
+label / gt_label / prompt 统一设置为 track_majority_label
+```
+
+单独渲染 2D tracking 视频：
+
+```bash
+python -m rebuild_3d_box_optimizer.render_sort2d_tracks \
+  --config outputs/original_2dbox_full_gpu_v1/configs/render_sort2d_tracks.yaml \
+  --output-dir outputs/original_2dbox_full_gpu_v1/tracking/sort2d_track_videos \
+  --fps 10 \
+  --thickness 1
+```
+
+输出：
+
+```text
+outputs/original_2dbox_full_gpu_v1/tracking/sort2d_track_videos/
+  rear_camera_sort2d_tracks.mp4
+  left_rear_camera_sort2d_tracks.mp4
+  right_rear_camera_sort2d_tracks.mp4
+```
+
+### 5. 一键跑原始 2D box 端到端流程
+
+全量 GPU 入口：
 
 ```bash
 cd /path/to/monocular-3d-detection-v1
-source /opt/miniforge3/etc/profile.d/conda.sh
-conda activate mono-detect-original-2dbox-full-gpu
+export PYTHONPATH="$(pwd)/code:${PYTHONPATH:-}"
+conda activate mono-detect-original-2dbox-full-cpu
 
 bash scripts/run_original_2dbox_full_pipeline.sh \
   /path/to/scene_data \
@@ -341,11 +314,11 @@ nohup bash scripts/run_original_2dbox_full_pipeline.sh \
 tail -f outputs/original_2dbox_full_gpu_v1/logs/e2e_run.log
 ```
 
-这一步会依次执行：
+这一步依次执行：
 
 ```text
 1. export_original_2dbox_csv.py
-   从 annotation JSON 导出每个相机的原始 2D box CSV。
+   从 annotation JSON 导出每个相机的逐帧 2D box。
 
 2. sam_segment_gt2d_boxes.py
    用 SAM 对每个 2D box 生成前景 mask。
@@ -353,316 +326,167 @@ tail -f outputs/original_2dbox_full_gpu_v1/logs/e2e_run.log
 3. da3_metric_rear_depth_export.py
    用 DA3 Metric 为每个相机导出 metric depth。
 
-4. retrack_sort_2d
-   基于原始 2D box 重新做 2D SORT tracking。
+4. rebuild_3d_box_optimizer.retrack_sort_2d
+   基于逐帧 2D box 重新做 SORT-lite tracking。
 
 5. attach_da3_depth_to_tracks.py
    把 DA3 depth 绑定到 track CSV，作为 3D 初始化深度来源。
 
 6. ensure_masks_for_all_tracks
-   确保每个 tracked 2D box 都能找到一个对应 mask；必要时会补齐 cropped mask。
+   确保每个 tracked 2D box 都能找到对应 mask；必要时补齐 cropped mask。
 
 7. rebuild_3d_box_optimizer.run
-   对每个 track 做单视角 3D box 优化，并输出展示版视频。
+   对每个 track 做单视角 3D box 优化，并输出 CSV / 视频。
 ```
 
-主要输出目录：
+主要输出：
 
 ```text
 outputs/original_2dbox_full_gpu_v1/
-  tracking_input/          原始 2D box 导出的 CSV
-  masks/raw_sam/           SAM 原始 mask 结果
+  tracking_input/          原始 2D box 导出的逐帧 CSV
+  masks/raw_sam/           SAM 原始 mask
   depth/                   DA3 metric depth
   tracking/sort2d_tracks/  2D tracking 结果
   tracks_with_depth/       绑定 depth 后的 track CSV
   masks/ensured/           与 track 对齐后的 mask
-  optimized_3d/            单视角 3D box 优化结果和展示版视频
+  optimized_3d/            单视角 3D box 优化结果和视频
 ```
 
-#### 5.1.1 2D 检测/标注框如何转成 2D track
-
-当前端到端流程默认 **不运行目标检测模型**。它假设原始数据里已经有逐帧 2D box，来源是：
-
-```text
-data/format_output/annotations/NV/*.json
-```
-
-如果你的数据不是这种 annotation JSON，也可以准备等价的逐帧 detection CSV，只要包含下列字段：
-
-```text
-frame, timestamp, image, x1, y1, x2, y2, label/gt_label/prompt, score
-```
-
-其中：
-
-- `frame`：连续帧号；
-- `timestamp`：原始时间戳；
-- `image`：当前帧图像路径；
-- `x1, y1, x2, y2`：2D box；
-- `label / gt_label / prompt`：类别名，三者有一个即可；
-- `score`：检测置信度；如果没有，代码默认用 `1.0`。
-
-完整转换链路是：
-
-```text
-annotation JSON 或 detection CSV
-  ↓
-export_original_2dbox_csv.py
-  ↓
-outputs/original_2dbox_full_gpu_v1/tracking_input/<camera>/tracks.csv
-  # 注意：这里虽然文件名叫 tracks.csv，但此时还只是逐帧 2D box，不是稳定 tracking。
-  ↓
-rebuild_3d_box_optimizer.retrack_sort_2d
-  ↓
-outputs/original_2dbox_full_gpu_v1/tracking/sort2d_tracks/<camera>/tracks.csv
-  # 这里才是重新追踪后的 2D track，包含稳定的 track_id。
-```
-
-第一步导出原始 2D box：
-
-```bash
-python scripts/export_original_2dbox_csv.py \
-  --annotations /path/to/scene_data/format_output/annotations/NV \
-  --camera-root /path/to/scene_data/camera \
-  --cameras rear_camera,left_rear_camera,right_rear_camera \
-  --output-root outputs/original_2dbox_full_gpu_v1/tracking_input \
-  --max-frames -1
-```
-
-第二步运行 2D SORT tracking：
-
-```bash
-python -m rebuild_3d_box_optimizer.retrack_sort_2d \
-  --config outputs/original_2dbox_full_gpu_v1/configs/retrack_sort_2d.yaml
-```
-
-对应配置由 `scripts/original_2dbox_full_pipeline_config.py` 自动生成，核心参数来自：
-
-```yaml
-tracking:
-  sort:
-    class_aware: true
-    start_track_id: 1
-    min_hits: 1
-    max_age: 6
-    process_noise: 10.0
-    measurement_noise: 25.0
-    iou_weight: 1.0
-    center_weight: 0.25
-    size_weight: 0.10
-    min_iou: 0.05
-    center_gate: 1.75
-    max_cost: 2.0
-```
-
-这些参数含义：
-
-- `class_aware: true`：只在同一归一化类别内做匹配。类别会先经过 `label_aliases` 映射，例如多个车辆子类会映射到 `car/truck/bus` 等统一类别。如果 2D label 很不准，可以改成 `false`，让追踪跨类别匹配。
-- `start_track_id`：每个相机内新 track 的起始 ID。
-- `min_hits`：一个 track 至少包含多少个检测框才保留。
-- `max_age`：目标短暂丢失多少帧内仍允许继续接回。
-- `process_noise / measurement_noise`：SORT 里卡尔曼滤波的过程噪声和观测噪声；越大表示更相信目标会自由变化。
-- `iou_weight`：匹配代价里 `1 - IoU` 的权重。
-- `center_weight`：匹配代价里中心点距离的权重。
-- `size_weight`：匹配代价里 box 宽高变化的权重。
-- `min_iou`：两个 box 的 IoU 达到该阈值时允许成为候选匹配。
-- `center_gate`：即使 IoU 很低，只要中心距离足够近，也允许成为候选匹配，用于处理运动快或 box 抖动的情况。
-- `max_cost`：最终匹配代价上限，超过就认为不是同一个目标。
-
-当前 SORT 状态量是：
-
-```text
-cx, cy, w, h, vx, vy, vw, vh
-```
-
-也就是在 2D 图像平面里预测 box 中心、宽高以及它们的速度。匹配时会同时看：
-
-```text
-代价 = iou_weight * (1 - IoU)
-     + center_weight * normalized_center_distance
-     + size_weight * normalized_size_change
-```
-
-追踪输出 CSV 会保留原始 detection 行，并新增/覆盖这些字段：
-
-```text
-track_id                  新的稳定 2D track id
-source_track_id           原始 annotation/detection 中的 id，如果有
-raw_label                 当前帧原始类别
-raw_canonical_label       当前帧映射后的类别
-track_majority_label      当前 track 多数帧类别
-track_majority_raw_label  当前 track 多数帧原始类别
-label / gt_label / prompt 会被统一设置为 track_majority_label
-```
-
-也就是说，后续 SAM mask 对齐、DA3 depth 绑定和 3D box 优化使用的是重新追踪后的 `track_id`，类别则默认使用整个 track 的多数帧类别，避免单帧 label 抖动。
-
-如果需要检查 2D tracking 是否正常，可以单独渲染：
-
-```bash
-python -m rebuild_3d_box_optimizer.render_sort2d_tracks \
-  --config outputs/original_2dbox_full_gpu_v1/configs/render_sort2d_tracks.yaml \
-  --output-dir outputs/original_2dbox_full_gpu_v1/tracking/sort2d_track_videos \
-  --fps 10 \
-  --thickness 1
-```
-
-输出：
-
-```text
-outputs/original_2dbox_full_gpu_v1/tracking/sort2d_track_videos/
-  rear_camera_sort2d_tracks.mp4
-  left_rear_camera_sort2d_tracks.mp4
-  right_rear_camera_sort2d_tracks.mp4
-```
-
-这一段依赖项很轻，主要是：
-
-```text
-numpy
-scipy              # Hungarian assignment
-pyyaml             # 读取配置
-opencv-python      # 只在渲染 tracking 视频时需要
-```
-
-不依赖 YOLO、SAM、DA3。SAM 和 DA3 是 tracking 之前/之后的其他阶段：SAM 用逐帧 2D box 生成 mask，DA3 生成 depth，SORT 只负责把逐帧 2D box 连成稳定轨迹。
-
-如果你只想先小样本验证，可以复制 `configs/original_2dbox_full_pipeline_gpu.yaml`，把：
+如果只想在新机器上先快速冒烟测试，可以复制配置并设置：
 
 ```yaml
 runtime:
   max_frames: 50
 ```
 
-设成较小帧数。
-
-### 5.2 第一步：三视角单视角 3D 优化
-
-```bash
-bash scripts/start_rebuild_repair_params_full_wsl.sh
-```
-
-看日志：
-
-```bash
-tail -f outputs/rebuild_three_views_repair_params_full_wsl_v1/logs/run.log
-```
-
-主要输出：
+或者直接使用 smoke 配置：
 
 ```text
-outputs/rebuild_three_views_repair_params_full_wsl_v1/frame_3d_boxes_world_track_joint.csv
-outputs/rebuild_three_views_repair_params_full_wsl_v1/frame_loss_diagnostics.csv
-outputs/rebuild_three_views_repair_params_full_wsl_v1/*_overlay.mp4
+configs/original_2dbox_full_pipeline_smoke.yaml
+configs/original_2dbox_full_pipeline_smoke_gpu.yaml
 ```
 
-### 5.3 第二步：LoMa 跨视角 2D track 关联
+### 6. 端到端之后的跨视角主线
+
+原始 2D box 端到端流程先得到每个视角内的单视角 3D 优化结果。之后可继续跑当前三视角主线：
 
 ```bash
 bash scripts/start_loma_repair_params_tracks_wsl.sh
-```
-
-看日志：
-
-```bash
-tail -f outputs/loma_global_2d_repair_params_tracks_v1/logs/run.log
-```
-
-主要输出：
-
-```text
-outputs/loma_global_2d_repair_params_tracks_v1/global_track_assignments.csv
-outputs/loma_global_2d_repair_params_tracks_v1/accepted_edges.csv
-outputs/loma_global_2d_repair_params_tracks_v1/candidate_diagnostics.csv
-```
-
-如果你已经手动准备好了 `global_track_assignments.csv`，可以跳过这一步，但需要把路径写进：
-
-```text
-configs/multiview_joint_loma_repair_from_singleview_v1.yaml
-```
-
-### 5.4 第三步：跨视角联合后优化
-
-```bash
 bash scripts/start_multiview_joint_loma_repair_wsl.sh
 ```
 
-看日志：
-
-```bash
-tail -f outputs/multiview_joint_loma_repair_from_singleview_v1/logs/run.log
-```
-
-主要输出：
+LoMa 阶段输出：
 
 ```text
-outputs/multiview_joint_loma_repair_from_singleview_v1/frame_3d_boxes_multiview_joint_from_singleview.csv
-outputs/multiview_joint_loma_repair_from_singleview_v1/frame_loss_diagnostics.csv
-outputs/multiview_joint_loma_repair_from_singleview_v1/global_track_optimization_summary.csv
-outputs/multiview_joint_loma_repair_from_singleview_v1/*_overlay.mp4
+outputs/loma_global_2d_repair_params_tracks_v1/
+  global_track_assignments.csv
+  accepted_edges.csv
+  candidate_diagnostics.csv
 ```
 
-## 6. 单独渲染某几个 global track
-
-用于检查跨视角同 ID 是否合理：
-
-```bash
-export PYTHONPATH="$(pwd)/code:${PYTHONPATH:-}"
-python scripts/render_multiview_joint_track_panels.py \
-  --config outputs/multiview_joint_loma_repair_from_singleview_v1/resolved_config.yaml \
-  --diagnostics outputs/multiview_joint_loma_repair_from_singleview_v1/frame_loss_diagnostics.csv \
-  --output-dir outputs/multiview_joint_loma_repair_from_singleview_v1/joint_track_videos \
-  --global-track-ids 126,135,145,165,170 \
-  --panel-width 640 \
-  --panel-height 360 \
-  --bev-width 520 \
-  --fps 10
-```
-
-输出示例：
+跨视角联合优化输出：
 
 ```text
-outputs/multiview_joint_loma_repair_from_singleview_v1/joint_track_videos/global_126_rear_right_rear_bev.mp4
+outputs/multiview_joint_loma_repair_from_singleview_v1/
+  frame_3d_boxes_multiview_joint_from_singleview.csv
+  frame_loss_diagnostics.csv
+  global_track_optimization_summary.csv
+  *_overlay.mp4
 ```
 
-## 7. 当前重要假设
+### 7. 依赖关系小结
 
-- 3D box size 顺序固定为 `[length, width, height]`。
-- yaw 当前不优化，默认与 rear camera / 自车运动方向平行。
-- box upright，只允许 yaw，不允许 pitch/roll。
-- 当前截断判断包含 track-level 启发式规则，这部分很重要但仍有待商榷。
-- 当前主线关闭 `depth_safety` / `center_depth_safety`，使用 `ego_box_safety` 处理近距离互穿。
-- `bbox_fit` 和 `top_bottom_edges` 主要用于远距离；近距离强贴 2D box 容易造成 box 变小并拉近。
-
-## 8. 上传 GitHub 前检查
-
-确认不要提交：
+2D tracking 本身只依赖：
 
 ```text
-data/
-preprocessed/
-outputs/
-checkpoints/
-models/
-external/
-third_party/
-*.pt / *.pth / *.ckpt / *.safetensors
+numpy
+scipy        # Hungarian assignment
+PyYAML
+opencv-python # 仅渲染 tracking 视频需要
 ```
 
-本包已经提供 `.gitignore`，但上传前建议再检查：
+完整原始三路后视端到端流程还需要：
 
-```bash
-git status --short
+```text
+torch / torchvision
+segment-anything + sam_vit_h_4b8939.pth
+Depth-Anything-3 + da3metric-large
+LoMa
+opencv-python
+Pillow
+pandas
+moviepy
+pycolmap / evo / e3nn 等 environment-original-2dbox-full-cpu.yml 中列出的包
 ```
 
-如果需要创建新仓库：
+注意：YOLO / ultralytics 是 Waymo 检测实验使用的依赖；原始三路后视数据流程默认不使用 YOLO。
 
-```bash
-git init
-git add README.md code configs documentation scripts environment-*.yml requirements-*.txt .gitignore
-git commit -m "initial monocular 3d pipeline"
-git branch -M main
-git remote add origin https://github.com/<USER>/<REPO>.git
-git push -u origin main
+## Run the full multiview joint optimization
+
+PowerShell:
+
+```powershell
+Set-Location D:\mono-detect
+$env:PYTHONPATH="D:\mono-detect\code"
+C:\ProgramData\miniforge3\envs\dvgt\python.exe -m rebuild_3d_box_optimizer.run_multiview_joint --config configs\multiview_joint_track_optimization_v1.yaml
 ```
+
+Watch progress in another PowerShell window:
+
+```powershell
+Set-Location D:\mono-detect
+Get-Content outputs\multiview_joint_track_optimization_v1\progress.log -Wait -Tail 40
+```
+
+The full config uses convergence mode:
+
+- Adam on CUDA when available
+- float32
+- max safety iterations: 3000
+- minimum iterations: 500
+- patience: 250
+- mask foreground point containment enabled
+- support-edge, bbox-fit, depth-safety, mask-containment, mask-oversize, and temporal smoothness losses
+- videos enabled with 3D box, 2D box, support edges, mask pixels, and per-frame loss panel
+
+## Main outputs
+
+`outputs/multiview_joint_track_optimization_v1/`
+
+- `global_track_assignments.csv` — source view/track to global track id
+- `global_track_components.csv` — tracks inside each global component, with conflict flags
+- `match_edges.csv` — accepted cross-camera matching edges
+- `candidate_match_diagnostics.csv` — top candidate matches and rejection reasons
+- `frame_3d_boxes_multiview_joint.csv` — optimized per-frame 3D boxes
+- `frame_loss_diagnostics.csv` — per-frame loss breakdown used by videos
+- `global_track_optimization_summary.csv` — per-global-track optimization summary
+- `*_overlay.mp4` — visualization videos
+- `progress.log` — live progress log
+
+## Useful configs
+
+- `configs/multiview_joint_track_optimization_v1.yaml` — full three-view association + joint optimization
+- `configs/multiview_track_association_v1.yaml` — association-only baseline
+- `configs/multiview_joint_track_optimization_smoke.yaml` — quick smoke test
+
+## Notes
+
+Large local data, preprocessing products, and generated outputs are intentionally ignored by git. Keep them in the workspace when running locally.
+
+## 配置工作流
+
+通用优化参数放在 `configs/common/`。实验配置文件应尽量保持很小，通常只负责：
+
+- 选择本次要跑的 view / track；
+- 覆盖本次实验专用输入；
+- 指定输出目录。
+
+每次实验运行时，输出目录都会保存一份完整展开后的：
+
+```text
+experiment_config_snapshot.yaml
+```
+
+可以把它看作“本次实验使用的通用配置副本”。之后即使继续修改 `configs/common/`，已经完成实验的快照也不会变化，方便复现和对比。
+
+新的调参优先修改通用配置文件，然后启动一个新实验，让新实验目录自动保存新的配置快照。
