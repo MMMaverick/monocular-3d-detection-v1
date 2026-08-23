@@ -1,0 +1,36 @@
+base_configs:
+  - rebuild_three_views_repair_params_full_wsl_v1.yaml
+
+# 复现用配置：
+# 参数继承自 rebuild_three_views_repair_params_full_wsl_v1。
+# 区别只在于显式指定已提交到仓库的三路 robust track + DA3 depth CSV。
+# 这样新机器不需要重新跑 2D tracking / DA3 depth 绑定，也不会因为 track id 不一致导致结果变差。
+
+inputs:
+  views:
+    rear:
+      camera_name: rear_camera
+      image_dir: data/camera/rear_camera
+      track_csv: preprocessed/tracks/robust_botsort_hybrid_depth_v1/rear_camera/tracks.csv
+      mask_csv: preprocessed/masks_robust_botsort_ensured_v1/rear_camera/gt2d_sam_masks_ensured_cropped.csv
+      intrinsic: data/calib/rear_camera/rear_camera-intrinsic.json
+      camera_to_ego: data/calib/rear_camera/rear_camera-to-car_center-extrinsic.json
+
+    left_rear:
+      camera_name: left_rear_camera
+      image_dir: data/camera/left_rear_camera
+      track_csv: preprocessed/tracks/robust_botsort_hybrid_depth_v1/left_rear_camera/tracks.csv
+      mask_csv: preprocessed/masks_robust_botsort_ensured_v1/left_rear_camera/gt2d_sam_masks_ensured_cropped.csv
+      intrinsic: data/calib/left_rear_camera/left_rear_camera-intrinsic.json
+      camera_to_ego: data/calib/left_rear_camera/left_rear_camera-to-car_center-extrinsic.json
+
+    right_rear:
+      camera_name: right_rear_camera
+      image_dir: data/camera/right_rear_camera
+      track_csv: preprocessed/tracks/robust_botsort_hybrid_depth_v1/right_rear_camera/tracks.csv
+      mask_csv: preprocessed/masks_robust_botsort_ensured_v1/right_rear_camera/gt2d_sam_masks_ensured_cropped.csv
+      intrinsic: data/calib/right_rear_camera/right_rear_camera-intrinsic.json
+      camera_to_ego: data/calib/right_rear_camera/right_rear_camera-to-car_center-extrinsic.json
+
+output:
+  dir: outputs/rebuild_three_views_repair_params_committed_tracks_v1
