@@ -127,9 +127,12 @@ git clone https://github.com/davnords/LoMa.git external/LoMa
 
 ### 3.2 SAM / Depth Anything / 其他权重
 
-当前主线优化本身不直接调用 SAM/Depth 模型；它读取已经准备好的 mask、track、depth 初始化 CSV。
+本项目支持两种运行方式：
 
-如果你需要从原始数据重新生成 mask/depth，则需要额外放置这些外部仓库和权重，例如：
+1. **已有预处理结果模式**：已经有 2D track、mask、depth 初始化 CSV，直接进入 3D box 优化和跨视角联合优化。
+2. **原始 2D box 端到端模式**：原始数据里只有 annotation JSON 中的 2D box，需要先跑 SAM 生成 mask、跑 DA3 生成 depth，再做 2D tracking 和 3D box 优化。
+
+如果使用第 2 种模式，需要额外放置这些外部仓库和权重：
 
 ```text
 third_party/segment_anything/
@@ -137,16 +140,43 @@ third_party/Depth-Anything-3/
 checkpoints/
 ```
 
-建议约定：
+当前代码默认读取：
 
 ```text
 checkpoints/
-  sam/
-  depth_anything/
-  loma/
+  sam_vit_h_4b8939.pth
+
+third_party/Depth-Anything-3/checkpoints/
+  da3metric-large/
 ```
 
-具体权重来源请使用各模型官方发布页面；由于权重体积大且授权各不相同，本仓库不提交权重。
+下载示例：
+
+```bash
+cd /path/to/monocular-3d-detection-v1
+
+mkdir -p third_party checkpoints
+git clone https://github.com/facebookresearch/segment-anything.git third_party/segment_anything
+git clone https://github.com/DepthAnything/Depth-Anything-3.git third_party/Depth-Anything-3
+
+wget -O checkpoints/sam_vit_h_4b8939.pth \
+  https://dl.fbaipublicfiles.com/segment_anything/sam_vit_h_4b8939.pth
+
+pip install -U huggingface_hub
+mkdir -p third_party/Depth-Anything-3/checkpoints/da3metric-large
+huggingface-cli download depth-anything/DA3METRIC-LARGE \
+  --local-dir third_party/Depth-Anything-3/checkpoints/da3metric-large
+```
+
+如果 Hugging Face 下载慢，可以临时使用镜像：
+
+```bash
+export HF_ENDPOINT=https://hf-mirror.com
+huggingface-cli download depth-anything/DA3METRIC-LARGE \
+  --local-dir third_party/Depth-Anything-3/checkpoints/da3metric-large
+```
+
+由于权重体积大且授权各不相同，本仓库不提交权重。建议优先从官方地址下载；如果网络不稳定，也可以手动拷贝 `checkpoints/` 和 `third_party/Depth-Anything-3/checkpoints/`。
 
 ## 4. 数据和预处理结果放置
 
@@ -262,7 +292,103 @@ conda activate mono-detect-original-2dbox-full-gpu
 export CONDA_SH=~/miniforge3/etc/profile.d/conda.sh
 ```
 
-### 5.1 第一步：三视角单视角 3D 优化
+### 5.1 可选前处理：从原始 2D box 生成 mask / depth / track
+
+如果你的输入是原始场景数据，且里面已经有 2D box annotation，但还没有 mask、DA3 depth、2D track，则先跑这一段。
+
+原始数据目录需要包含：
+
+```text
+data/
+  camera/
+    rear_camera/
+    left_rear_camera/
+    right_rear_camera/
+  calib/
+    rear_camera/
+    left_rear_camera/
+    right_rear_camera/
+  format_output/annotations/NV/
+```
+
+其中 `format_output/annotations/NV/*.json` 是原始 2D box 来源；本流程不会跑目标检测。
+
+一键运行：
+
+```bash
+cd /path/to/monocular-3d-detection-v1
+source /opt/miniforge3/etc/profile.d/conda.sh
+conda activate mono-detect-original-2dbox-full-gpu
+
+bash scripts/run_original_2dbox_full_pipeline.sh \
+  /path/to/scene_data \
+  configs/original_2dbox_full_pipeline_gpu.yaml
+```
+
+后台运行：
+
+```bash
+mkdir -p outputs/original_2dbox_full_gpu_v1/logs
+nohup bash scripts/run_original_2dbox_full_pipeline.sh \
+  /path/to/scene_data \
+  configs/original_2dbox_full_pipeline_gpu.yaml \
+  > outputs/original_2dbox_full_gpu_v1/logs/e2e_run.log 2>&1 &
+```
+
+看日志：
+
+```bash
+tail -f outputs/original_2dbox_full_gpu_v1/logs/e2e_run.log
+```
+
+这一步会依次执行：
+
+```text
+1. export_original_2dbox_csv.py
+   从 annotation JSON 导出每个相机的原始 2D box CSV。
+
+2. sam_segment_gt2d_boxes.py
+   用 SAM 对每个 2D box 生成前景 mask。
+
+3. da3_metric_rear_depth_export.py
+   用 DA3 Metric 为每个相机导出 metric depth。
+
+4. retrack_sort_2d
+   基于原始 2D box 重新做 2D SORT tracking。
+
+5. attach_da3_depth_to_tracks.py
+   把 DA3 depth 绑定到 track CSV，作为 3D 初始化深度来源。
+
+6. ensure_masks_for_all_tracks
+   确保每个 tracked 2D box 都能找到一个对应 mask；必要时会补齐 cropped mask。
+
+7. rebuild_3d_box_optimizer.run
+   对每个 track 做单视角 3D box 优化，并输出展示版视频。
+```
+
+主要输出目录：
+
+```text
+outputs/original_2dbox_full_gpu_v1/
+  tracking_input/          原始 2D box 导出的 CSV
+  masks/raw_sam/           SAM 原始 mask 结果
+  depth/                   DA3 metric depth
+  tracking/sort2d_tracks/  2D tracking 结果
+  tracks_with_depth/       绑定 depth 后的 track CSV
+  masks/ensured/           与 track 对齐后的 mask
+  optimized_3d/            单视角 3D box 优化结果和展示版视频
+```
+
+如果你只想先小样本验证，可以复制 `configs/original_2dbox_full_pipeline_gpu.yaml`，把：
+
+```yaml
+runtime:
+  max_frames: 50
+```
+
+设成较小帧数。
+
+### 5.2 第一步：三视角单视角 3D 优化
 
 ```bash
 bash scripts/start_rebuild_repair_params_full_wsl.sh
@@ -282,7 +408,7 @@ outputs/rebuild_three_views_repair_params_full_wsl_v1/frame_loss_diagnostics.csv
 outputs/rebuild_three_views_repair_params_full_wsl_v1/*_overlay.mp4
 ```
 
-### 5.2 第二步：LoMa 跨视角 2D track 关联
+### 5.3 第二步：LoMa 跨视角 2D track 关联
 
 ```bash
 bash scripts/start_loma_repair_params_tracks_wsl.sh
@@ -308,7 +434,7 @@ outputs/loma_global_2d_repair_params_tracks_v1/candidate_diagnostics.csv
 configs/multiview_joint_loma_repair_from_singleview_v1.yaml
 ```
 
-### 5.3 第三步：跨视角联合后优化
+### 5.4 第三步：跨视角联合后优化
 
 ```bash
 bash scripts/start_multiview_joint_loma_repair_wsl.sh
