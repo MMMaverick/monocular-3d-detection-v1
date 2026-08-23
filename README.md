@@ -379,6 +379,154 @@ outputs/original_2dbox_full_gpu_v1/
   optimized_3d/            单视角 3D box 优化结果和展示版视频
 ```
 
+#### 5.1.1 2D 检测/标注框如何转成 2D track
+
+当前端到端流程默认 **不运行目标检测模型**。它假设原始数据里已经有逐帧 2D box，来源是：
+
+```text
+data/format_output/annotations/NV/*.json
+```
+
+如果你的数据不是这种 annotation JSON，也可以准备等价的逐帧 detection CSV，只要包含下列字段：
+
+```text
+frame, timestamp, image, x1, y1, x2, y2, label/gt_label/prompt, score
+```
+
+其中：
+
+- `frame`：连续帧号；
+- `timestamp`：原始时间戳；
+- `image`：当前帧图像路径；
+- `x1, y1, x2, y2`：2D box；
+- `label / gt_label / prompt`：类别名，三者有一个即可；
+- `score`：检测置信度；如果没有，代码默认用 `1.0`。
+
+完整转换链路是：
+
+```text
+annotation JSON 或 detection CSV
+  ↓
+export_original_2dbox_csv.py
+  ↓
+outputs/original_2dbox_full_gpu_v1/tracking_input/<camera>/tracks.csv
+  # 注意：这里虽然文件名叫 tracks.csv，但此时还只是逐帧 2D box，不是稳定 tracking。
+  ↓
+rebuild_3d_box_optimizer.retrack_sort_2d
+  ↓
+outputs/original_2dbox_full_gpu_v1/tracking/sort2d_tracks/<camera>/tracks.csv
+  # 这里才是重新追踪后的 2D track，包含稳定的 track_id。
+```
+
+第一步导出原始 2D box：
+
+```bash
+python scripts/export_original_2dbox_csv.py \
+  --annotations /path/to/scene_data/format_output/annotations/NV \
+  --camera-root /path/to/scene_data/camera \
+  --cameras rear_camera,left_rear_camera,right_rear_camera \
+  --output-root outputs/original_2dbox_full_gpu_v1/tracking_input \
+  --max-frames -1
+```
+
+第二步运行 2D SORT tracking：
+
+```bash
+python -m rebuild_3d_box_optimizer.retrack_sort_2d \
+  --config outputs/original_2dbox_full_gpu_v1/configs/retrack_sort_2d.yaml
+```
+
+对应配置由 `scripts/original_2dbox_full_pipeline_config.py` 自动生成，核心参数来自：
+
+```yaml
+tracking:
+  sort:
+    class_aware: true
+    start_track_id: 1
+    min_hits: 1
+    max_age: 6
+    process_noise: 10.0
+    measurement_noise: 25.0
+    iou_weight: 1.0
+    center_weight: 0.25
+    size_weight: 0.10
+    min_iou: 0.05
+    center_gate: 1.75
+    max_cost: 2.0
+```
+
+这些参数含义：
+
+- `class_aware: true`：只在同一归一化类别内做匹配。类别会先经过 `label_aliases` 映射，例如多个车辆子类会映射到 `car/truck/bus` 等统一类别。如果 2D label 很不准，可以改成 `false`，让追踪跨类别匹配。
+- `start_track_id`：每个相机内新 track 的起始 ID。
+- `min_hits`：一个 track 至少包含多少个检测框才保留。
+- `max_age`：目标短暂丢失多少帧内仍允许继续接回。
+- `process_noise / measurement_noise`：SORT 里卡尔曼滤波的过程噪声和观测噪声；越大表示更相信目标会自由变化。
+- `iou_weight`：匹配代价里 `1 - IoU` 的权重。
+- `center_weight`：匹配代价里中心点距离的权重。
+- `size_weight`：匹配代价里 box 宽高变化的权重。
+- `min_iou`：两个 box 的 IoU 达到该阈值时允许成为候选匹配。
+- `center_gate`：即使 IoU 很低，只要中心距离足够近，也允许成为候选匹配，用于处理运动快或 box 抖动的情况。
+- `max_cost`：最终匹配代价上限，超过就认为不是同一个目标。
+
+当前 SORT 状态量是：
+
+```text
+cx, cy, w, h, vx, vy, vw, vh
+```
+
+也就是在 2D 图像平面里预测 box 中心、宽高以及它们的速度。匹配时会同时看：
+
+```text
+代价 = iou_weight * (1 - IoU)
+     + center_weight * normalized_center_distance
+     + size_weight * normalized_size_change
+```
+
+追踪输出 CSV 会保留原始 detection 行，并新增/覆盖这些字段：
+
+```text
+track_id                  新的稳定 2D track id
+source_track_id           原始 annotation/detection 中的 id，如果有
+raw_label                 当前帧原始类别
+raw_canonical_label       当前帧映射后的类别
+track_majority_label      当前 track 多数帧类别
+track_majority_raw_label  当前 track 多数帧原始类别
+label / gt_label / prompt 会被统一设置为 track_majority_label
+```
+
+也就是说，后续 SAM mask 对齐、DA3 depth 绑定和 3D box 优化使用的是重新追踪后的 `track_id`，类别则默认使用整个 track 的多数帧类别，避免单帧 label 抖动。
+
+如果需要检查 2D tracking 是否正常，可以单独渲染：
+
+```bash
+python -m rebuild_3d_box_optimizer.render_sort2d_tracks \
+  --config outputs/original_2dbox_full_gpu_v1/configs/render_sort2d_tracks.yaml \
+  --output-dir outputs/original_2dbox_full_gpu_v1/tracking/sort2d_track_videos \
+  --fps 10 \
+  --thickness 1
+```
+
+输出：
+
+```text
+outputs/original_2dbox_full_gpu_v1/tracking/sort2d_track_videos/
+  rear_camera_sort2d_tracks.mp4
+  left_rear_camera_sort2d_tracks.mp4
+  right_rear_camera_sort2d_tracks.mp4
+```
+
+这一段依赖项很轻，主要是：
+
+```text
+numpy
+scipy              # Hungarian assignment
+pyyaml             # 读取配置
+opencv-python      # 只在渲染 tracking 视频时需要
+```
+
+不依赖 YOLO、SAM、DA3。SAM 和 DA3 是 tracking 之前/之后的其他阶段：SAM 用逐帧 2D box 生成 mask，DA3 生成 depth，SORT 只负责把逐帧 2D box 连成稳定轨迹。
+
 如果你只想先小样本验证，可以复制 `configs/original_2dbox_full_pipeline_gpu.yaml`，把：
 
 ```yaml
