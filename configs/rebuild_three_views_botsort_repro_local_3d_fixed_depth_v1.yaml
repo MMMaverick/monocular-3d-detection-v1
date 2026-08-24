@@ -1,0 +1,19 @@
+base_configs:
+  - rebuild_three_views_botsort_repro_local_3d_v1.yaml
+
+experiment:
+  name: rebuild_three_views_botsort_repro_local_3d_fixed_depth_v1
+  mode: offline
+  status: optimize_3d_boxes_from_reproduced_botsort_tracks_with_fixed_da3_bbox_mapping
+
+inputs:
+  views:
+    rear:
+      track_csv: outputs/robust_botsort_2d_rear_views_repro_local_v1/tracks_with_depth_fixed_image_size_v1/rear_camera/tracks.csv
+    left_rear:
+      track_csv: outputs/robust_botsort_2d_rear_views_repro_local_v1/tracks_with_depth_fixed_image_size_v1/left_rear_camera/tracks.csv
+    right_rear:
+      track_csv: outputs/robust_botsort_2d_rear_views_repro_local_v1/tracks_with_depth_fixed_image_size_v1/right_rear_camera/tracks.csv
+
+output:
+  dir: outputs/rebuild_three_views_botsort_repro_local_3d_fixed_depth_v1

@@ -160,6 +160,7 @@ if [[ "$(cfg depth.enabled)" == "true" ]]; then
     --depth-root "$(cfg paths.depth_output)" \
     --calib-root "$(cfg paths.calib_root)" \
     --cameras "$(cfg data.cameras)" \
+    --image-root "$(cfg paths.scene)" \
     --output-root "$(cfg paths.depth_tracks)"
 else
   log "depth disabled; copy tracked boxes as depth-track input"

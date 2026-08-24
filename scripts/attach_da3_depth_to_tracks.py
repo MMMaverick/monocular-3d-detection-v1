@@ -16,6 +16,22 @@ def main() -> int:
     parser.add_argument("--calib-root", required=True)
     parser.add_argument("--cameras", required=True)
     parser.add_argument("--output-root", required=True)
+    parser.add_argument(
+        "--image-root",
+        default="",
+        help=(
+            "Root directory used to resolve relative row['image'] paths. "
+            "For this dataset this should normally be D:/vggt-omega, because "
+            "track CSV rows contain paths like data/camera/rear_camera/*.jpg."
+        ),
+    )
+    parser.add_argument("--image-width", type=float, default=0.0, help="Fallback source image width in pixels, e.g. 1920.")
+    parser.add_argument("--image-height", type=float, default=0.0, help="Fallback source image height in pixels, e.g. 1080.")
+    parser.add_argument(
+        "--allow-bbox-size-fallback",
+        action="store_true",
+        help="Dangerous legacy behavior: if image size is unknown, use x2/y2 as image size. Disabled by default.",
+    )
     parser.add_argument("--bbox-scale", type=float, default=1.0)
     parser.add_argument("--conf-percentile", type=float, default=0.0)
     parser.add_argument("--min-depth", type=float, default=1e-3)
@@ -41,7 +57,17 @@ def main() -> int:
         write_csv(out_csv, rows)
         stats.update({"camera": camera, "rows": len(rows), "csv": str(out_csv)})
         summary.append(stats)
-        print(f"ATTACH_DEPTH camera={camera} rows={len(rows)} depth_rows={stats['depth_attached']} csv={out_csv}", flush=True)
+        print(
+            "ATTACH_DEPTH "
+            f"camera={camera} rows={len(rows)} depth_rows={stats['depth_attached']} "
+            f"missing_depth={stats['missing_depth']} "
+            f"image_size_csv={stats['image_size_from_csv']} "
+            f"image_size_root={stats['image_size_from_image_root']} "
+            f"image_size_fixed={stats['image_size_from_fixed_arg']} "
+            f"image_size_bbox_fallback={stats['image_size_from_bbox_fallback']} "
+            f"csv={out_csv}",
+            flush=True,
+        )
     write_csv(out_root / "summary.csv", summary)
     return 0
 
@@ -49,7 +75,14 @@ def main() -> int:
 def attach_camera(src: Path, depth_dir: Path, intrinsic_path: Path, args: argparse.Namespace) -> tuple[list[dict[str, object]], dict[str, object]]:
     rows = read_csv(src)
     if not rows:
-        return [], {"depth_attached": 0, "missing_depth": 0}
+        return [], {
+            "depth_attached": 0,
+            "missing_depth": 0,
+            "image_size_from_csv": 0,
+            "image_size_from_image_root": 0,
+            "image_size_from_fixed_arg": 0,
+            "image_size_from_bbox_fallback": 0,
+        }
     depth_pack = np.load(depth_dir / "depth.npz")
     depth = np.asarray(depth_pack["depth"], dtype=np.float32)
     conf = np.asarray(depth_pack["depth_conf"], dtype=np.float32) if "depth_conf" in depth_pack else np.ones_like(depth, dtype=np.float32)
@@ -59,6 +92,7 @@ def attach_camera(src: Path, depth_dir: Path, intrinsic_path: Path, args: argpar
 
     attached = 0
     missing = 0
+    size_sources = {"csv": 0, "image_root": 0, "fixed_arg": 0, "bbox_fallback": 0}
     for row in rows:
         image_key = norm_path(Path(str(row.get("image", ""))))
         frame = int_float(row.get("frame", -1))
@@ -66,23 +100,40 @@ def attach_camera(src: Path, depth_dir: Path, intrinsic_path: Path, args: argpar
         if depth_idx < 0 or depth_idx >= depth.shape[0]:
             missing += 1
             continue
-        ok = attach_row_depth(row, depth[depth_idx], conf[depth_idx], intrinsic, args)
+        ok, size_source = attach_row_depth(row, depth[depth_idx], conf[depth_idx], intrinsic, args)
+        if size_source:
+            size_sources[size_source] = size_sources.get(size_source, 0) + 1
         attached += int(ok)
         missing += int(not ok)
-    return rows, {"depth_attached": attached, "missing_depth": missing}
+    return rows, {
+        "depth_attached": attached,
+        "missing_depth": missing,
+        "image_size_from_csv": size_sources.get("csv", 0),
+        "image_size_from_image_root": size_sources.get("image_root", 0),
+        "image_size_from_fixed_arg": size_sources.get("fixed_arg", 0),
+        "image_size_from_bbox_fallback": size_sources.get("bbox_fallback", 0),
+    }
 
 
-def attach_row_depth(row: dict[str, object], depth: np.ndarray, conf: np.ndarray, intrinsic: np.ndarray, args: argparse.Namespace) -> bool:
+def attach_row_depth(row: dict[str, object], depth: np.ndarray, conf: np.ndarray, intrinsic: np.ndarray, args: argparse.Namespace) -> tuple[bool, str]:
     try:
         x1, y1, x2, y2 = [float(row[k]) for k in ("x1", "y1", "x2", "y2")]
     except Exception:
-        return False
+        return False, ""
     if x2 <= x1 or y2 <= y1:
-        return False
+        return False, ""
     h, w = depth.shape[:2]
-    src_w, src_h = source_image_size(row)
-    src_w = max(src_w, x2 + 1.0)
-    src_h = max(src_h, y2 + 1.0)
+    src_w, src_h, size_source = source_image_size(row, args)
+    if src_w <= 1 or src_h <= 1:
+        if not bool(args.allow_bbox_size_fallback):
+            raise ValueError(
+                "Could not resolve source image size for row "
+                f"image={row.get('image')!r}. Pass --image-root pointing at the dataset root "
+                "or pass --image-width/--image-height. Refusing legacy bbox-size fallback."
+            )
+        src_w = max(src_w, x2 + 1.0)
+        src_h = max(src_h, y2 + 1.0)
+        size_source = "bbox_fallback"
     sx = w / src_w
     sy = h / src_h
     bx1, by1, bx2, by2 = expand_box(x1, y1, x2, y2, float(args.bbox_scale))
@@ -91,14 +142,14 @@ def attach_row_depth(row: dict[str, object], depth: np.ndarray, conf: np.ndarray
     ix2 = int(np.ceil(np.clip(bx2 * sx, 0, w)))
     iy2 = int(np.ceil(np.clip(by2 * sy, 0, h)))
     if ix2 <= ix1 or iy2 <= iy1:
-        return False
+        return False, size_source
     z_patch = depth[iy1:iy2, ix1:ix2].reshape(-1)
     c_patch = conf[iy1:iy2, ix1:ix2].reshape(-1)
     valid = np.isfinite(z_patch) & np.isfinite(c_patch) & (z_patch > float(args.min_depth)) & (z_patch < float(args.max_depth))
     if np.any(valid) and float(args.conf_percentile) > 0:
         valid &= c_patch >= np.percentile(c_patch[valid], float(args.conf_percentile))
     if not np.any(valid):
-        return False
+        return False, size_source
     vals = z_patch[valid]
     z_med = float(np.median(vals))
     z_mean = float(np.mean(vals))
@@ -117,10 +168,13 @@ def attach_row_depth(row: dict[str, object], depth: np.ndarray, conf: np.ndarray
     row["y_cam"] = (cy - py) / fy * z_med
     row["z_cam"] = z_med
     row["depth_source"] = "da3_bbox_median"
-    return True
+    row["depth_source_image_width"] = src_w
+    row["depth_source_image_height"] = src_h
+    row["depth_source_image_size_source"] = size_source
+    return True, size_source
 
 
-def source_image_size(row: dict[str, object]) -> tuple[float, float]:
+def source_image_size(row: dict[str, object], args: argparse.Namespace) -> tuple[float, float, str]:
     for wk, hk in (("img_new_w", "img_new_h"), ("image_width", "image_height"), ("width", "height")):
         try:
             w = float(row.get(wk) or 0)
@@ -128,14 +182,40 @@ def source_image_size(row: dict[str, object]) -> tuple[float, float]:
         except Exception:
             w = h = 0.0
         if w > 1 and h > 1:
-            return w, h
+            return w, h, "csv"
     image = str(row.get("image") or "")
-    if image:
-        frame = cv2.imread(image, cv2.IMREAD_GRAYSCALE)
+    image_path = resolve_image_path(image, str(getattr(args, "image_root", "") or ""))
+    if image_path is not None:
+        frame = cv2.imread(str(image_path), cv2.IMREAD_GRAYSCALE)
         if frame is not None:
             ih, iw = frame.shape[:2]
-            return float(iw), float(ih)
-    return 0.0, 0.0
+            return float(iw), float(ih), "image_root"
+    fixed_w = float(getattr(args, "image_width", 0.0) or 0.0)
+    fixed_h = float(getattr(args, "image_height", 0.0) or 0.0)
+    if fixed_w > 1 and fixed_h > 1:
+        return fixed_w, fixed_h, "fixed_arg"
+    return 0.0, 0.0, ""
+
+
+def resolve_image_path(image: str, image_root: str) -> Path | None:
+    if not image:
+        return None
+    raw = Path(image)
+    candidates: list[Path] = []
+    if raw.is_absolute():
+        candidates.append(raw)
+    else:
+        if image_root:
+            root = Path(image_root)
+            candidates.append(root / raw)
+        candidates.append(raw)
+    for candidate in candidates:
+        try:
+            if candidate.exists():
+                return candidate
+        except OSError:
+            continue
+    return None
 
 
 def expand_box(x1: float, y1: float, x2: float, y2: float, scale: float) -> tuple[float, float, float, float]:
