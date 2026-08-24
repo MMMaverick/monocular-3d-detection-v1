@@ -86,8 +86,9 @@ log "write generated configs"
   --write-generated
 
 PIPELINE_JSON="$(cfg paths.generated_configs)/pipeline_resolved.json"
+ROBUST_TRACK_CONFIG="$(cfg paths.generated_configs)/robust_botsort_2d.yaml"
 RETRACK_CONFIG="$(cfg paths.generated_configs)/retrack_sort_2d.yaml"
-TRACK_RENDER_CONFIG="$(cfg paths.generated_configs)/render_sort2d_tracks.yaml"
+TRACK_RENDER_CONFIG="$(cfg paths.generated_configs)/render_robust_botsort_tracks.yaml"
 ENSURE_MASKS_CONFIG="$(cfg paths.generated_configs)/ensure_masks.yaml"
 REBUILD_CONFIG="$(cfg paths.generated_configs)/rebuild_3d.yaml"
 
@@ -141,8 +142,16 @@ if [[ "$(cfg depth.enabled)" == "true" ]]; then
   done
 fi
 
-log "run 2D SORT tracking on existing 2D boxes"
-"${PYTHON_BIN}" -m rebuild_3d_box_optimizer.retrack_sort_2d --config "${RETRACK_CONFIG}"
+TRACK_ROOT="$(cfg paths.robust_tracks)"
+if [[ "$(cfg tracking.method)" == "robust_botsort" ]]; then
+  log "run appearance-assisted BoT-SORT tracking on SAM/2D boxes"
+  "${PYTHON_BIN}" -m rebuild_3d_box_optimizer.robust_track_2d --config "${ROBUST_TRACK_CONFIG}"
+else
+  log "run fallback SORT-lite tracking on existing 2D boxes"
+  "${PYTHON_BIN}" -m rebuild_3d_box_optimizer.retrack_sort_2d --config "${RETRACK_CONFIG}"
+  TRACK_ROOT="$(cfg paths.sort_tracks)"
+  TRACK_RENDER_CONFIG="$(cfg paths.generated_configs)/render_sort2d_tracks.yaml"
+fi
 
 if [[ "$(cfg tracking.render_video)" == "true" ]]; then
   log "render 2D tracking videos"
@@ -156,7 +165,7 @@ fi
 if [[ "$(cfg depth.enabled)" == "true" ]]; then
   log "attach DA3 depth to tracked 2D boxes"
   "${PYTHON_BIN}" "${REPO_ROOT}/scripts/attach_da3_depth_to_tracks.py" \
-    --track-root "$(cfg paths.tracking)/sort2d_tracks" \
+    --track-root "${TRACK_ROOT}" \
     --depth-root "$(cfg paths.depth_output)" \
     --calib-root "$(cfg paths.calib_root)" \
     --cameras "$(cfg data.cameras)" \
@@ -165,7 +174,7 @@ if [[ "$(cfg depth.enabled)" == "true" ]]; then
 else
   log "depth disabled; copy tracked boxes as depth-track input"
   mkdir -p "$(cfg paths.depth_tracks)"
-  cp -a "$(cfg paths.tracking)/sort2d_tracks/." "$(cfg paths.depth_tracks)/"
+  cp -a "${TRACK_ROOT}/." "$(cfg paths.depth_tracks)/"
 fi
 
 if [[ "$(cfg masks.ensure_for_every_track_box)" == "true" ]]; then

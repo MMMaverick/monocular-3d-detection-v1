@@ -186,11 +186,42 @@ scripts/export_original_2dbox_csv.py
 outputs/original_2dbox_full_*/tracking_input/<camera>/tracks.csv
   # 注意：这里虽然叫 tracks.csv，但此时仍是逐帧 2D box，不是稳定 tracking
   ↓
-python -m rebuild_3d_box_optimizer.retrack_sort_2d
+SAM mask CSV / cropped boxes
   ↓
-outputs/original_2dbox_full_*/tracking/sort2d_tracks/<camera>/tracks.csv
+python -m rebuild_3d_box_optimizer.robust_track_2d
+  ↓
+outputs/original_2dbox_full_*/tracking/robust_botsort_tracks/<camera>/tracks.csv
   # 这里才是重新追踪后的 2D track，包含稳定 track_id
 ```
+
+当前本地复现实验使用的不是 SORT-lite，而是 appearance-assisted BoT-SORT：
+
+```text
+2D box / SAM CSV
+  ↓
+DINOv2 crop embedding
+  ↓
+BoxMOT BoT-SORT + CMC(ECC)
+  ↓
+稳定单视角 tracks.csv
+```
+
+这对应本地复现配置：
+
+```text
+configs/robust_botsort_2d_rear_views_repro_local_v1.yaml
+```
+
+以及历史复现输出：
+
+```text
+outputs/robust_botsort_2d_rear_views_repro_local_v1/
+  rear_camera/tracks.csv
+  left_rear_camera/tracks.csv
+  right_rear_camera/tracks.csv
+```
+
+注意：SORT-lite (`retrack_sort_2d`) 仍然保留在仓库中，但它只是轻量 fallback / debug 方案，不是当前推荐复现主线。之前复现效果更接近历史实验的是 BoT-SORT 这一版。
 
 如果手动执行导出：
 
@@ -203,55 +234,51 @@ python scripts/export_original_2dbox_csv.py \
   --max-frames -1
 ```
 
-2D SORT 追踪入口：
+推荐 BoT-SORT 追踪入口：
 
 ```bash
-python -m rebuild_3d_box_optimizer.retrack_sort_2d \
-  --config outputs/original_2dbox_full_gpu_v1/configs/retrack_sort_2d.yaml
+python -m rebuild_3d_box_optimizer.robust_track_2d \
+  --config outputs/original_2dbox_full_gpu_v1/configs/robust_botsort_2d.yaml
 ```
 
-追踪器是项目内自写的 SORT-lite，不依赖 YOLO / SAM / DA3。状态量是：
-
-```text
-cx, cy, w, h, vx, vy, vw, vh
-```
-
-每帧会先用 Kalman 预测，再用 Hungarian assignment 匹配 detection 和已有 track。匹配代价为：
-
-```text
-cost = iou_weight * (1 - IoU)
-     + center_weight * normalized_center_distance
-     + size_weight * normalized_size_change
-```
-
-推荐追踪参数：
+推荐 BoT-SORT 参数：
 
 ```yaml
 tracking:
-  sort:
-    # 如果原始 label 不稳定，推荐设为 false：
-    # tracking 不按类别硬切开，track 类别由多数帧投票决定。
-    class_aware: false
-    start_track_id: 1
+  method: robust_botsort
+  appearance:
+    type: dinov2
+    model: dinov2_vitl14
+    device: cuda
+    batch_size: 24
+    crop_size: 224
+    box_padding: 0.08
+  botsort:
+    frame_rate: 10
+    track_high_thresh: 0.45
+    track_low_thresh: 0.08
+    new_track_thresh: 0.50
+    track_buffer: 60
+    match_thresh: 0.80
+    proximity_thresh: 0.70
+    appearance_thresh: 0.35
+    second_match_thresh: 0.50
+    unconfirmed_match_thresh: 0.70
     min_hits: 1
-    max_age: 6
-    process_noise: 10.0
-    measurement_noise: 25.0
-    iou_weight: 1.0
-    center_weight: 0.25
-    size_weight: 0.10
-    min_iou: 0.05
-    center_gate: 1.75
-    max_cost: 2.0
+    max_obs: 100
+    fuse_first_associate: true
+    use_cmc: true
+    cmc_method: ecc
 ```
 
 说明：
 
-- `class_aware: false`：类别不参与匹配，避免同一辆车因为单帧 label 错误被拆成多个 track；
-- `track_majority_label`：追踪结束后按整个 track 的多数帧类别确定最终类别；
-- `max_age`：目标短暂遮挡或漏检时可保活的帧数；
-- `min_iou` 和 `center_gate`：允许 IoU 或中心距离任一条件进入候选；
-- `max_cost`：最终匹配代价上限，防止完全不相关的框被硬连。
+- `appearance.type: dinov2`：用 DINOv2 对每个 2D box crop 提外观特征；
+- `track_buffer: 60`：目标短暂遮挡或漏检时可保活的帧数；
+- `proximity_thresh` / `appearance_thresh`：BoT-SORT 第一阶段匹配的空间和外观门限；
+- `use_cmc: true`、`cmc_method: ecc`：启用相机运动补偿；
+- 当前 `robust_track_2d` 是按 canonical class 分组跑 BoT-SORT，然后给 `track_id` 加类别段偏移，例如 `class_id * 1_000_000 + local_track_id`；
+- 追踪后仍会对每条 track 做多数帧类别投票，写入 `track_majority_label` / `track_majority_raw_label`，用于后续 3D size prior。
 
 追踪输出会保留原始 detection 行，并新增/覆盖：
 
@@ -269,8 +296,8 @@ label / gt_label / prompt 统一设置为 track_majority_label
 
 ```bash
 python -m rebuild_3d_box_optimizer.render_sort2d_tracks \
-  --config outputs/original_2dbox_full_gpu_v1/configs/render_sort2d_tracks.yaml \
-  --output-dir outputs/original_2dbox_full_gpu_v1/tracking/sort2d_track_videos \
+  --config outputs/original_2dbox_full_gpu_v1/configs/render_robust_botsort_tracks.yaml \
+  --output-dir outputs/original_2dbox_full_gpu_v1/tracking/robust_botsort_track_videos \
   --fps 10 \
   --thickness 1
 ```
@@ -278,7 +305,7 @@ python -m rebuild_3d_box_optimizer.render_sort2d_tracks \
 输出：
 
 ```text
-outputs/original_2dbox_full_gpu_v1/tracking/sort2d_track_videos/
+outputs/original_2dbox_full_gpu_v1/tracking/robust_botsort_track_videos/
   rear_camera_sort2d_tracks.mp4
   left_rear_camera_sort2d_tracks.mp4
   right_rear_camera_sort2d_tracks.mp4
@@ -326,8 +353,8 @@ tail -f outputs/original_2dbox_full_gpu_v1/logs/e2e_run.log
 3. da3_metric_rear_depth_export.py
    用 DA3 Metric 为每个相机导出 metric depth。
 
-4. rebuild_3d_box_optimizer.retrack_sort_2d
-   基于逐帧 2D box 重新做 SORT-lite tracking。
+4. rebuild_3d_box_optimizer.robust_track_2d
+   基于 SAM/2D box CSV、DINOv2 外观特征和 BoT-SORT 重新做稳定 2D tracking。
 
 5. attach_da3_depth_to_tracks.py
    把 DA3 depth 绑定到 track CSV，作为 3D 初始化深度来源。
@@ -346,7 +373,8 @@ outputs/original_2dbox_full_gpu_v1/
   tracking_input/          原始 2D box 导出的逐帧 CSV
   masks/raw_sam/           SAM 原始 mask
   depth/                   DA3 metric depth
-  tracking/sort2d_tracks/  2D tracking 结果
+  tracking/robust_botsort_tracks/  BoT-SORT 2D tracking 结果
+  tracking/sort2d_tracks/          fallback SORT-lite 结果，仅在 tracking.method != robust_botsort 时使用
   tracks_with_depth/       绑定 depth 后的 track CSV
   masks/ensured/           与 track 对齐后的 mask
   optimized_3d/            单视角 3D box 优化结果和视频
@@ -396,7 +424,42 @@ outputs/multiview_joint_loma_repair_from_singleview_v1/
 
 ### 7. 依赖关系小结
 
-2D tracking 本身只依赖：
+推荐 2D tracking 主线依赖：
+
+```text
+torch / torchvision
+boxmot
+opencv-python
+numpy
+PyYAML
+DINOv2 本地 torch hub cache
+```
+
+BoT-SORT 主线需要提前缓存 DINOv2。推荐在有网络的机器上执行一次：
+
+```bash
+python - <<'PY'
+import torch
+torch.hub.load("facebookresearch/dinov2", "dinov2_vitl14", pretrained=True)
+print(torch.hub.get_dir())
+PY
+```
+
+之后 `robust_track_2d.py` 会从下面的本地缓存读取：
+
+```text
+~/.cache/torch/hub/facebookresearch_dinov2_main
+```
+
+如果新机器不能访问网络，可以把这整个 cache 文件夹手动拷过去。快速 smoke 或无 DINO 环境可以在配置中临时使用：
+
+```yaml
+tracking:
+  appearance:
+    type: hsv_histogram
+```
+
+fallback SORT-lite 只依赖：
 
 ```text
 numpy

@@ -50,7 +50,39 @@ DEFAULTS: dict[str, Any] = {
         "chunk_size": 20,
         "stride": 1,
     },
-    "tracking": {"enabled": True, "render_video": True, "thickness": 1, "sort": {}},
+    "tracking": {
+        "enabled": True,
+        "method": "robust_botsort",
+        "render_video": True,
+        "thickness": 1,
+        "appearance": {
+            "type": "dinov2",
+            "model": "dinov2_vitl14",
+            "device": "cpu",
+            "batch_size": 24,
+            "crop_size": 224,
+            "box_padding": 0.08,
+        },
+        "botsort": {
+            "frame_rate": 10,
+            "track_high_thresh": 0.45,
+            "track_low_thresh": 0.08,
+            "new_track_thresh": 0.50,
+            "track_buffer": 60,
+            "match_thresh": 0.80,
+            "proximity_thresh": 0.70,
+            "appearance_thresh": 0.35,
+            "second_match_thresh": 0.50,
+            "unconfirmed_match_thresh": 0.70,
+            "min_hits": 1,
+            "max_obs": 100,
+            "fuse_first_associate": True,
+            "use_cmc": True,
+            "cmc_method": "ecc",
+        },
+        # Kept as a light fallback/debug path; the reproduction path uses BoT-SORT.
+        "sort": {},
+    },
     "masks": {"ensure_for_every_track_box": True, "min_iou": 0.30, "allow_label_mismatch": False},
     "optimization_3d": {
         "enabled": True,
@@ -118,6 +150,8 @@ def resolve_config(user: dict[str, Any], repo: Path, scene: Path) -> dict[str, A
         "depth_output": posix(out_root / "depth"),
         "tracking_input": posix(out_root / "tracking_input"),
         "tracking": posix(out_root / "tracking"),
+        "robust_tracks": posix(out_root / "tracking" / "robust_botsort_tracks"),
+        "sort_tracks": posix(out_root / "tracking" / "sort2d_tracks"),
         "depth_tracks": posix(out_root / "tracks_with_depth"),
         "ensured_masks": posix(out_root / "masks" / "ensured"),
         "optimized_3d": posix(out_root / "optimized_3d"),
@@ -151,10 +185,42 @@ def write_generated_configs(cfg: dict[str, Any]) -> None:
     config_dir = Path(cfg["paths"]["generated_configs"])
     config_dir.mkdir(parents=True, exist_ok=True)
     (config_dir / "pipeline_resolved.json").write_text(json.dumps(cfg, indent=2, ensure_ascii=False), encoding="utf-8")
+    write_robust_botsort_config(cfg, config_dir / "robust_botsort_2d.yaml")
     write_retrack_config(cfg, config_dir / "retrack_sort_2d.yaml")
-    write_render_track_config(cfg, config_dir / "render_sort2d_tracks.yaml", depth_tracks=False)
+    write_render_track_config(cfg, config_dir / "render_robust_botsort_tracks.yaml", base_path=cfg["paths"]["robust_tracks"], name="render_original_2dbox_robust_botsort_tracks")
+    write_render_track_config(cfg, config_dir / "render_sort2d_tracks.yaml", base_path=cfg["paths"]["sort_tracks"], name="render_original_2dbox_sort_tracks")
     write_ensure_masks_config(cfg, config_dir / "ensure_masks.yaml")
     write_3d_optimizer_config(cfg, config_dir / "rebuild_3d.yaml")
+
+
+def write_robust_botsort_config(cfg: dict[str, Any], path: Path) -> None:
+    views = cfg["resolved_views"]
+    lines = [
+        "experiment:",
+        "  name: original_2dbox_robust_botsort",
+        "  mode: offline",
+        "  description: Appearance-assisted BoT-SORT tracking from SAM/2D-box detections.",
+        "inputs:",
+        "  views:",
+    ]
+    detection_root = cfg["paths"]["sam_output"] if cfg["sam"].get("enabled", True) else cfg["paths"]["tracking_input"]
+    for camera, view in views.items():
+        lines += [
+            f"    {view}:",
+            f"      detections_csv: {detection_root}/{camera}/gt2d_sam_masks.csv" if cfg["sam"].get("enabled", True) else f"      detections_csv: {detection_root}/{camera}/tracks.csv",
+            f"      image_dir: {cfg['paths']['camera_root']}/{camera}",
+            f"      output_name: {camera}",
+        ]
+    lines += ["input_sequence:", f"  first_frame: 0"]
+    append_common_labels(lines)
+    lines += ["appearance:"]
+    for key, value in cfg["tracking"].get("appearance", {}).items():
+        lines.append(f"  {key}: {yaml_value(value)}")
+    lines += ["tracker:"]
+    for key, value in cfg["tracking"].get("botsort", {}).items():
+        lines.append(f"  {key}: {yaml_value(value)}")
+    lines += ["track_id_remaps: {}", "output:", f"  dir: {cfg['paths']['robust_tracks']}"]
+    path.write_text("\n".join(lines) + "\n", encoding="utf-8")
 
 
 def write_retrack_config(cfg: dict[str, Any], path: Path) -> None:
@@ -176,19 +242,19 @@ def write_retrack_config(cfg: dict[str, Any], path: Path) -> None:
             f"      track_csv: {cfg['paths']['tracking_input']}/{camera}/tracks.csv",
         ]
     append_common_labels(lines)
-    lines += ["retracking:", "  sort_2d:", f"    output_dir: {cfg['paths']['tracking']}/sort2d_tracks"]
+    lines += ["retracking:", "  sort_2d:", f"    output_dir: {cfg['paths']['sort_tracks']}"]
     for key, value in cfg["tracking"]["sort"].items():
         lines.append(f"    {key}: {yaml_value(value)}")
     path.write_text("\n".join(lines) + "\n", encoding="utf-8")
 
 
-def write_render_track_config(cfg: dict[str, Any], path: Path, depth_tracks: bool) -> None:
+def write_render_track_config(cfg: dict[str, Any], path: Path, base_path: str, name: str) -> None:
     views = cfg["resolved_views"]
-    base = Path(cfg["paths"]["depth_tracks"] if depth_tracks else f"{cfg['paths']['tracking']}/sort2d_tracks")
+    base = Path(base_path)
     lines = [
         "schema_version: 1",
         "experiment:",
-        "  name: render_original_2dbox_sort_tracks",
+        f"  name: {name}",
         "scope:",
         "  cameras: [" + ", ".join(views.values()) + "]",
         "inputs:",

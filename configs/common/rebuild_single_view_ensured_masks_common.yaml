@@ -413,6 +413,12 @@ observations:
     # 当前默认用初始距离做开关，避免优化中被错误推远后反过来触发这个 loss。
     far_start_m: 10.0
 
+    # 是否让“上下都未截断”的 2D box 无视距离阈值，直接启用上下贴边。
+    # 建议新实验打开：小摩托/电动车这类近距离但未截断目标，如果只靠 mask contain，
+    # 可能因为点采样/mean reduction 没有被严格包住；未截断时上下贴边可以补这个约束。
+    # 对 top/bottom 截断帧仍保留 far_start_m 距离门控和单边约束，避免近距离截断目标被强行拉坏。
+    activate_untruncated: false
+
     # 远距离开关使用哪种距离：
     #   initial_distance：使用优化前的 center 距离，推荐；
     #   current_distance：使用当前优化距离。

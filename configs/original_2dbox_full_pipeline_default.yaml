@@ -43,9 +43,35 @@ depth:
 
 tracking:
   enabled: true
+  # 主线追踪：appearance-assisted BoT-SORT。SORT-lite 只作为轻量 fallback。
+  method: robust_botsort
   render_video: true
   thickness: 1
+  appearance:
+    type: dinov2
+    model: dinov2_vitl14
+    device: cpu
+    batch_size: 8
+    crop_size: 224
+    box_padding: 0.08
+  botsort:
+    frame_rate: 10
+    track_high_thresh: 0.45
+    track_low_thresh: 0.08
+    new_track_thresh: 0.50
+    track_buffer: 60
+    match_thresh: 0.80
+    proximity_thresh: 0.70
+    appearance_thresh: 0.35
+    second_match_thresh: 0.50
+    unconfirmed_match_thresh: 0.70
+    min_hits: 1
+    max_obs: 100
+    fuse_first_associate: true
+    use_cmc: true
+    cmc_method: ecc
   sort:
+    # fallback SORT-lite 参数；默认主线不会使用。
     # 不跨类别追踪；track 的类别由 track 内多数帧决定。
     class_aware: false
     start_track_id: 1

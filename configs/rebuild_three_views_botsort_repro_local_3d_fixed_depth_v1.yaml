@@ -17,3 +17,8 @@ inputs:
 
 output:
   dir: outputs/rebuild_three_views_botsort_repro_local_3d_fixed_depth_v1
+
+observations:
+  top_bottom_edges:
+    # 保持原始策略：只在 initial_distance > 10m 时启用上下贴边。
+    activate_untruncated: false

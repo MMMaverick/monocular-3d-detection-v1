@@ -685,6 +685,13 @@ def compute_top_bottom_edge_loss(
     distance = gate_distance_for_loss(cfg, centers, tensors)
     far_start = float(cfg.get("far_start_m", 10.0))
     gate = (distance > far_start).to(dtype=box.dtype)
+    if bool(cfg.get("activate_untruncated", False)):
+        # For fully visible objects, especially small motorcycles/e-bikes, the
+        # projected cuboid should also fit the 2D box vertically at close range.
+        # Keep the distance gate for vertically truncated frames, where one-sided
+        # constraints are safer.
+        vertical_untruncated = ~(tensors["truncated_top"] | tensors["truncated_bottom"])
+        gate = torch.maximum(gate, vertical_untruncated.to(dtype=box.dtype))
     box_h = (box[:, 3] - box[:, 1]).clamp_min(1.0)
     top_eq = (pred_bbox[:, 1] - box[:, 1]) / box_h
     bottom_eq = (pred_bbox[:, 3] - box[:, 3]) / box_h

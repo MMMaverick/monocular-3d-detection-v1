@@ -84,7 +84,7 @@ def load_view_observations(config: dict[str, Any], view: str) -> list[Observatio
             init_cam = override.copy()
         init_world = transform_points(init_cam[None, :], pose.camera_to_world)[0]
         yaw_value, yaw_source = fixed_yaws.get((view, track_id, frame), (0.0, "zero_default"))
-        raw_label = row.get("gt_label") or row.get("label") or row.get("prompt") or "default"
+        raw_label = row_label(row)
         label = canonical_label(config, raw_label)
         init_size, min_size, max_size = class_sizes(config, label)
         mask = match_mask(masks, frame, track_id, box, label)
@@ -390,7 +390,7 @@ def parse_int_value(value: str | int | float) -> int:
 
 def initial_center_cam(row: dict[str, str], box: np.ndarray, intrinsic: np.ndarray, config: dict[str, Any]) -> np.ndarray:
     keys = ("x_cam", "y_cam", "z_cam")
-    label = canonical_label(config, row.get("gt_label") or row.get("label") or row.get("prompt") or "default")
+    label = canonical_label(config, row_label(row))
     init_size, _, _ = class_sizes(config, label)
     h_px = max(float(box[3] - box[1]), 1.0)
     height_prior_depth = float(intrinsic[1, 1] * init_size[2] / h_px)
@@ -419,6 +419,21 @@ def center_from_depth(box: np.ndarray, intrinsic: np.ndarray, depth: float) -> n
     x = (cx - intrinsic[0, 2]) * depth / intrinsic[0, 0]
     y = (cy - intrinsic[1, 2]) * depth / intrinsic[1, 1]
     return np.asarray([x, y, depth], dtype=np.float64)
+
+
+def row_label(row: dict[str, Any]) -> str:
+    """Return the best available semantic label from a 2D track/mask row.
+
+    Historical CSVs used ``gt_label``/``label``/``prompt`` while the reproduced
+    BoT-SORT CSVs use ``raw_label`` and ``class_name``.  Falling back to default
+    here silently turns motorcycles/persons into car-sized default boxes, which
+    breaks depth initialization and vertical fitting for small objects.
+    """
+    for key in ("gt_label", "raw_label", "class_name", "label", "prompt"):
+        value = row.get(key)
+        if value not in (None, ""):
+            return str(value)
+    return "default"
 
 
 def class_sizes(config: dict[str, Any], label: str) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
