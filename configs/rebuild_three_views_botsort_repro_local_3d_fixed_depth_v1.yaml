@@ -1,5 +1,5 @@
 base_configs:
-  - rebuild_three_views_botsort_repro_local_3d_v1.yaml
+  - configs/rebuild_three_views_botsort_repro_local_3d_v1.yaml
 
 experiment:
   name: rebuild_three_views_botsort_repro_local_3d_fixed_depth_v1

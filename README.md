@@ -5,6 +5,10 @@ Monocular / surround-view 3D box reconstruction experiments for rear, left-rear,
 > 当前推荐入口：请先看
 > [`documentation/current_multiview_3d_pipeline_cn.md`](documentation/current_multiview_3d_pipeline_cn.md)。
 > 该文档记录目前正在使用的“单视角优化 → LoMa 跨视角匹配 → 跨视角联合后优化”主线流程。
+>
+> 最新本地成功复现版请看
+> [`documentation/reproduce_latest_success_botsort_fixed_depth_10m_cn.md`](documentation/reproduce_latest_success_botsort_fixed_depth_10m_cn.md)。
+> 该文档冻结了 BoT-SORT + 修正 DA3 depth + label fix + 10m 上下贴边规则这版实验的配置和输入 CSV。
 
 The current main pipeline is a two-stage offline baseline:
 

@@ -1,0 +1,41 @@
+schema_version: 1
+
+experiment:
+  name: ensure_masks_for_reproduce_latest_success_v1
+  mode: offline
+  status: align_sam_masks_to_committed_robust_botsort_fixed_da3_depth_tracks
+
+scope:
+  cameras: [rear, left_rear, right_rear]
+
+inputs:
+  views:
+    rear:
+      camera_name: rear_camera
+      image_dir: data/camera/rear_camera
+      track_csv: preprocessed/tracks/robust_botsort_fixed_da3_depth_v1/rear_camera/tracks.csv
+      mask_csv: outputs/robust_botsort_2d_rear_views_repro_local_v1/masks/raw_sam/rear_camera/gt2d_sam_masks.csv
+    left_rear:
+      camera_name: left_rear_camera
+      image_dir: data/camera/left_rear_camera
+      track_csv: preprocessed/tracks/robust_botsort_fixed_da3_depth_v1/left_rear_camera/tracks.csv
+      mask_csv: outputs/robust_botsort_2d_rear_views_repro_local_v1/masks/raw_sam/left_rear_camera/gt2d_sam_masks.csv
+    right_rear:
+      camera_name: right_rear_camera
+      image_dir: data/camera/right_rear_camera
+      track_csv: preprocessed/tracks/robust_botsort_fixed_da3_depth_v1/right_rear_camera/tracks.csv
+      mask_csv: outputs/robust_botsort_2d_rear_views_repro_local_v1/masks/raw_sam/right_rear_camera/gt2d_sam_masks.csv
+
+label_aliases:
+  VEHICLE_CAR: car
+  VEHICLE_SUV: car
+  VEHICLE_TRUCK: truck
+  VEHICLE_TRUCK_SMALL: truck
+  VEHICLE_TRAILER: truck
+  VEHICLE_BUS: bus
+  PEDESTRIAN_NORMAL: person
+  MOTOR: motorcycle
+  CYCLIST_MOTOR: motorcycle
+  BICYCLE: bicycle
+  CYCLIST_BICYCLE: bicycle
+  VEHICLE_TRIKE: motorcycle

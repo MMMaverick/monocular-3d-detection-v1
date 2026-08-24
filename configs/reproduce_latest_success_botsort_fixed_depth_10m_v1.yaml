@@ -1,0 +1,79 @@
+base_configs:
+  - configs/rebuild_three_views_botsort_repro_local_3d_v1.yaml
+
+experiment:
+  name: reproduce_latest_success_botsort_fixed_depth_10m_v1
+  mode: offline
+  status: frozen_reproduction_of_2026_08_24_successful_botsort_fixed_da3_depth_label_fix_10m_run
+
+inputs:
+  # 新机器精确复现建议把原始场景内容放到仓库 data/ 下：
+  #   data/camera/{rear_camera,left_rear_camera,right_rear_camera}
+  #   data/calib/{camera}/{intrinsic,extrinsic}.json
+  #   data/format_output/annotations/NV/*.json
+  annotations_dir: data/format_output/annotations/NV
+  views:
+    rear:
+      camera_name: rear_camera
+      image_dir: data/camera/rear_camera
+      track_csv: preprocessed/tracks/robust_botsort_fixed_da3_depth_v1/rear_camera/tracks.csv
+      mask_csv: outputs/robust_botsort_2d_rear_views_repro_local_v1/masks_ensured_for_3d/rear_camera/gt2d_sam_masks_ensured_cropped.csv
+      intrinsic: data/calib/rear_camera/rear_camera-intrinsic.json
+      camera_to_ego: data/calib/rear_camera/rear_camera-to-car_center-extrinsic.json
+    left_rear:
+      camera_name: left_rear_camera
+      image_dir: data/camera/left_rear_camera
+      track_csv: preprocessed/tracks/robust_botsort_fixed_da3_depth_v1/left_rear_camera/tracks.csv
+      mask_csv: outputs/robust_botsort_2d_rear_views_repro_local_v1/masks_ensured_for_3d/left_rear_camera/gt2d_sam_masks_ensured_cropped.csv
+      intrinsic: data/calib/left_rear_camera/left_rear_camera-intrinsic.json
+      camera_to_ego: data/calib/left_rear_camera/left_rear_camera-to-car_center-extrinsic.json
+    right_rear:
+      camera_name: right_rear_camera
+      image_dir: data/camera/right_rear_camera
+      track_csv: preprocessed/tracks/robust_botsort_fixed_da3_depth_v1/right_rear_camera/tracks.csv
+      mask_csv: outputs/robust_botsort_2d_rear_views_repro_local_v1/masks_ensured_for_3d/right_rear_camera/gt2d_sam_masks_ensured_cropped.csv
+      intrinsic: data/calib/right_rear_camera/right_rear_camera-intrinsic.json
+      camera_to_ego: data/calib/right_rear_camera/right_rear_camera-to-car_center-extrinsic.json
+
+observations:
+  top_bottom_edges:
+    # 成功复现版保持 10m 规则：只有 initial_distance > 10m 才启用上下贴边。
+    activate_untruncated: false
+
+  depth:
+    enabled: true
+    role: initialization_only
+    initialization_mode: da3
+
+  ground_plane:
+    enabled: true
+    camera_height_m: 0.8
+    camera_height_m_by_view:
+      rear: 0.6
+
+solver:
+  device: cuda
+  learning_rate: 0.1
+  max_iterations: 3000
+  track_parallel:
+    enabled: true
+    workers: 4
+
+output:
+  dir: outputs/reproduce_latest_success_botsort_fixed_depth_10m_v1
+  videos: true
+  video:
+    # 展示版：mask + 2D box + 3D box + BEV，不显示 loss 面板/贴边。
+    draw_mask_pixels: true
+    draw_2d_box: true
+    box_2d_thickness: 1
+    draw_3d_box: true
+    draw_projected_bbox: false
+    draw_bev: true
+    draw_loss_panel: false
+    draw_support_edges: false
+    draw_corner_points: false
+    draw_corner_labels: false
+    draw_center_projection: false
+    draw_box_dimensions: false
+    draw_truncation_label: false
