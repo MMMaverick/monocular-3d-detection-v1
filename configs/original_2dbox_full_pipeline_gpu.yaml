@@ -93,7 +93,7 @@ optimization_3d:
   device: cuda
   max_iterations: 3000
   workers: 4
-  learning_rate: 0.01
+  learning_rate: 0.1
   render_video: true
   output_videos: true
   initialization_mode: da3
@@ -109,8 +109,12 @@ optimization_3d:
     size_ratio_prior_weight: 1.0
     ground_plane_enabled: true
     ground_plane_weight: 5.0
-    camera_height_m: 0.5
+    # 成功复现版：侧后视默认 0.8m，rear 单独 0.6m。
+    camera_height_m: 0.8
+    camera_height_m_by_view:
+      rear: 0.6
     top_bottom_edges_enabled: true
     top_bottom_edges_weight: 100.0
     top_bottom_edges_far_start_m: 10.0
+    top_bottom_edges_activate_untruncated: false
     temporal_smoothness_enabled: true

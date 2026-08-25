@@ -89,11 +89,15 @@ DEFAULTS: dict[str, Any] = {
         "device": "cpu",
         "max_iterations": 3000,
         "workers": 4,
-        "learning_rate": 0.01,
+        "learning_rate": 0.1,
         "render_video": True,
         "output_videos": True,
         "initialization_mode": "da3",
-        "losses": {},
+        "losses": {
+            "camera_height_m": 0.8,
+            "camera_height_m_by_view": {"rear": 0.6},
+            "top_bottom_edges_activate_untruncated": False,
+        },
     },
 }
 
@@ -366,10 +370,18 @@ def write_3d_optimizer_config(cfg: dict[str, Any], path: Path) -> None:
         f"    enabled: {yaml_value(losses.get('top_bottom_edges_enabled', True))}",
         f"    weight: {float(losses.get('top_bottom_edges_weight', 100.0))}",
         f"    far_start_m: {float(losses.get('top_bottom_edges_far_start_m', 10.0))}",
+        f"    activate_untruncated: {yaml_value(losses.get('top_bottom_edges_activate_untruncated', False))}",
         "  ground_plane:",
         f"    enabled: {yaml_value(losses.get('ground_plane_enabled', True))}",
         f"    weight: {float(losses.get('ground_plane_weight', 5.0))}",
-        f"    camera_height_m: {float(losses.get('camera_height_m', 0.5))}",
+        f"    camera_height_m: {float(losses.get('camera_height_m', 0.8))}",
+    ]
+    camera_height_by_view = losses.get("camera_height_m_by_view", {"rear": 0.6})
+    if isinstance(camera_height_by_view, dict) and camera_height_by_view:
+        lines.append("    camera_height_m_by_view:")
+        for view_name, value in camera_height_by_view.items():
+            lines.append(f"      {view_name}: {float(value)}")
+    lines += [
         "  temporal_smoothness:",
         f"    enabled: {yaml_value(losses.get('temporal_smoothness_enabled', True))}",
     ]
