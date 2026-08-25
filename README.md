@@ -30,7 +30,7 @@ SAM mask
   ↓
 DA3 metric depth
   ↓
-DINOv2 + BoT-SORT 重新追踪
+DINOv2 + 固定版本 BoxMOT BoT-SORT 重新追踪
   ↓
 把 DA3 depth 绑定到新生成的 tracks.csv
   ↓
@@ -61,7 +61,7 @@ depth_median / x_cam / y_cam / z_cam / depth_source_image_width / depth_source_i
 
 ### A. 从原始数据完整重跑，也重新生成 track
 
-这条路径会重新生成 SAM mask、DA3 depth、BoT-SORT track、depth-track、mask 对齐和 3D 优化。适合检查整套流程是否能在新机器跑通：
+这条路径会重新生成 SAM mask、DA3 depth、BoT-SORT track、depth-track、mask 对齐和 3D 优化。用于远端从原始 2D box 开始复刻时，必须同时固定代码版本、权重版本、DINOv2 cache 和 BoxMOT 环境版本：
 
 ```bash
 cd /path/to/monocular-3d-detection-v1
@@ -101,7 +101,19 @@ outputs/original_2dbox_full_gpu_v1/tracks_with_depth/
 
 3D 优化默认使用 `tracks_with_depth` 里的这三份新生成 CSV。
 
-由于 SAM / DA3 / DINOv2 / BoT-SORT 都会重新推理，结果应接近本地版本，但不承诺逐字节一致。如果效果明显不对，优先检查新生成的 track 数量、depth 分布和 mask 对齐行数。
+如果远端结果和本地不一致，优先检查：
+
+```text
+boxmot==22.0.0
+ultralytics==8.4.115
+torch==2.8.0+cu128
+torchvision==0.23.0+cu128
+DINOv2 本地 cache 是否一致
+SAM checkpoint 是否一致
+DA3 metric checkpoint 是否一致
+```
+
+不要使用未固定版本的 `pip install boxmot`，否则同样的 2D box 也可能得到完全不同的 track 关联。
 
 ### B. 已提交 fixed-depth tracks 只作为 debug 对照
 
@@ -627,12 +639,44 @@ outputs/multiview_joint_loma_repair_from_singleview_v1/
 
 ```text
 torch / torchvision
-boxmot
+boxmot==22.0.0
+ultralytics==8.4.115
+lap==0.5.13
+lapx==0.9.4
+filterpy==1.4.5
 opencv-python
 numpy
 PyYAML
 DINOv2 本地 torch hub cache
 ```
+
+重要：如果目标是复刻本地原实验，不要只写 `pip install boxmot`。BoT-SORT/BoxMOT 是状态机，版本或默认参数变化会直接改变 track 关联结果。当前本地成功实验环境中检测到的关键版本记录在：
+
+```text
+documentation/local_dvgt_pip_freeze_windows_boxmot22.txt
+```
+
+其中关键追踪版本是：
+
+```text
+boxmot==22.0.0
+ultralytics==8.4.115
+torch==2.8.0+cu128
+torchvision==0.23.0+cu128
+lap==0.5.13
+lapx==0.9.4
+filterpy==1.4.5
+```
+
+Windows 的 `dvgt` conda 环境不能直接复制到 Ubuntu 运行，因为 wheel 和动态库平台不同。如果想“整包搬环境”，建议在 WSL/Ubuntu 上按 `environment-ubuntu-gpu.yml` 建好环境，确认 tracking 结果正常后再用 `conda-pack` 打包这个 Linux 环境，拷贝到远端 Ubuntu 解压使用。
+
+远端启动完整流程前，建议先跑一次环境检查：
+
+```bash
+python scripts/check_repro_environment.py --repo "$(pwd)" --strict
+```
+
+如果这里报版本不一致，先不要继续跑 tracking；否则生成出来的 `track_id` 很可能又和本地实验对不上。
 
 BoT-SORT 主线需要提前缓存 DINOv2。推荐在有网络的机器上执行一次：
 

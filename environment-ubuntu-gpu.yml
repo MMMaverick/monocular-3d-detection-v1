@@ -21,4 +21,9 @@ dependencies:
       - requests
       - trimesh
       - moviepy==1.0.3
-      - boxmot
+      # 追踪复刻必须固定 BoxMOT 相关版本；不要让 pip 自动安装最新版。
+      - boxmot==22.0.0
+      - ultralytics==8.4.115
+      - lap==0.5.13
+      - lapx==0.9.4
+      - filterpy==1.4.5
