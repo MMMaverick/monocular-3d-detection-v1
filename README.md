@@ -17,6 +17,201 @@ The current main pipeline is a two-stage offline baseline:
 
 Yaw is currently fixed to the rear-camera / ego-motion reference direction. The box is upright; pitch and roll are not optimized.
 
+## 新机器优先复现这版：track 也重新生成
+
+如果目标是确认“本地最新成功复现版”能不能在新机器恢复，优先跑完整流程，不要直接拿仓库里提交的 track 当最终输入。
+
+也就是说，新机器上默认应该重新生成：
+
+```text
+annotation JSON
+  ↓
+SAM mask
+  ↓
+DA3 metric depth
+  ↓
+DINOv2 + BoT-SORT 重新追踪
+  ↓
+把 DA3 depth 绑定到新生成的 tracks.csv
+  ↓
+确保每个 tracked 2D box 都有 mask
+  ↓
+3D box 优化
+```
+
+仓库里提交的两套 track CSV 只用于对照和排查：
+
+```text
+preprocessed/tracks/robust_botsort_hybrid_depth_v1/*/tracks.csv
+```
+
+这是纯 BoT-SORT 2D track 对照文件。
+
+```text
+preprocessed/tracks/robust_botsort_fixed_da3_depth_v1/*/tracks.csv
+```
+
+这是本地成功实验曾经使用过的 fixed DA3 depth track 对照文件，包含：
+
+```text
+depth_median / x_cam / y_cam / z_cam / depth_source_image_width / depth_source_image_height
+```
+
+但如果你要验证“新机器完整流程是否能恢复”，应该使用下面 A 路径，让 track 在新机器重新生成。
+
+### A. 从原始数据完整重跑，也重新生成 track
+
+这条路径会重新生成 SAM mask、DA3 depth、BoT-SORT track、depth-track、mask 对齐和 3D 优化。适合检查整套流程是否能在新机器跑通：
+
+```bash
+cd /path/to/monocular-3d-detection-v1
+export PYTHONPATH="$(pwd)/code:${PYTHONPATH:-}"
+conda activate mono-detect-original-2dbox-full-cpu
+
+bash scripts/run_original_2dbox_full_pipeline.sh \
+  /path/to/scene_data \
+  configs/original_2dbox_full_pipeline_gpu.yaml
+```
+
+这里的 `/path/to/scene_data` 需要包含：
+
+```text
+camera/
+calib/
+format_output/annotations/NV/
+```
+
+这条是当前最重要的“完整流程复现”。它会在新机器输出新的 track：
+
+```text
+outputs/original_2dbox_full_gpu_v1/tracking/robust_botsort_tracks/
+  rear_camera/tracks.csv
+  left_rear_camera/tracks.csv
+  right_rear_camera/tracks.csv
+```
+
+然后继续生成带 depth 的 track：
+
+```text
+outputs/original_2dbox_full_gpu_v1/tracks_with_depth/
+  rear_camera/tracks.csv
+  left_rear_camera/tracks.csv
+  right_rear_camera/tracks.csv
+```
+
+3D 优化默认使用 `tracks_with_depth` 里的这三份新生成 CSV。
+
+由于 SAM / DA3 / DINOv2 / BoT-SORT 都会重新推理，结果应接近本地版本，但不承诺逐字节一致。如果效果明显不对，优先检查新生成的 track 数量、depth 分布和 mask 对齐行数。
+
+### B. 已提交 fixed-depth tracks 只作为 debug 对照
+
+如果怀疑新机器重新 tracking 结果不稳定，可以临时使用仓库里提交的 fixed-depth tracks 做 debug。这个路径不是默认完整流程，只用于隔离问题：判断问题来自 tracking/depth 生成，还是来自 3D 优化代码。
+
+先把原始场景数据放到仓库的 `data/` 下：
+
+```text
+monocular-3d-detection-v1/
+  data/
+    camera/
+    calib/
+    format_output/annotations/NV/
+```
+
+然后先生成 raw SAM mask：
+
+```bash
+python code/examples/sam_segment_gt2d_boxes.py \
+  --annotations data/format_output/annotations/NV \
+  --camera-root data/camera \
+  --cameras rear_camera,left_rear_camera,right_rear_camera \
+  --output outputs/robust_botsort_2d_rear_views_repro_local_v1/masks/raw_sam \
+  --checkpoint checkpoints/sam_vit_h_4b8939.pth \
+  --model-type vit_h \
+  --box-scale 1.5 \
+  --positive-points 5 \
+  --max-frames -1 \
+  --device cuda \
+  --fps 10 \
+  --mask-format png \
+  --min-gt2d-score 0.0
+```
+
+再把 mask 对齐到已提交的 fixed-depth tracks：
+
+```bash
+python -m rebuild_3d_box_optimizer.ensure_masks_for_all_tracks \
+  --config configs/ensure_masks_for_reproduce_latest_success_v1.yaml \
+  --output-dir outputs/robust_botsort_2d_rear_views_repro_local_v1/masks_ensured_for_3d \
+  --min-iou 0.30
+```
+
+最后跑冻结 3D 配置：
+
+```bash
+python -m rebuild_3d_box_optimizer.run \
+  --config configs/reproduce_latest_success_botsort_fixed_depth_10m_v1.yaml
+```
+
+输出在：
+
+```text
+outputs/reproduce_latest_success_botsort_fixed_depth_10m_v1
+```
+
+这条路径固定了本地成功实验的 depth-track CSV 和 3D 参数；重新生成 mask。如果 A 路径不行但 B 路径正常，说明问题主要在新机器重新生成的 tracking/depth；如果 B 路径也不正常，说明问题更可能在 mask 生成/对齐、环境版本或 3D 优化代码。
+
+如果这条仍明显不对，优先对比：
+
+```text
+outputs/robust_botsort_2d_rear_views_repro_local_v1/masks_ensured_for_3d/*/gt2d_sam_masks_ensured_cropped.csv
+```
+
+本地成功版 mask 对齐行数应为：
+
+```text
+rear_camera       3246
+left_rear_camera  1801
+right_rear_camera 1190
+```
+
+### C. 最新成功版关键参数
+
+冻结配置：
+
+```text
+configs/reproduce_latest_success_botsort_fixed_depth_10m_v1.yaml
+```
+
+关键参数：
+
+```yaml
+solver:
+  device: cuda
+  learning_rate: 0.1
+  max_iterations: 3000
+  track_parallel:
+    workers: 4
+
+observations:
+  top_bottom_edges:
+    activate_untruncated: false   # 保持 10m 规则
+  ground_plane:
+    camera_height_m: 0.8
+    camera_height_m_by_view:
+      rear: 0.6
+```
+
+本地成功版规模：
+
+```text
+有效优化轨迹：145
+rear        66
+left_rear   26
+right_rear  53
+```
+
+完整重跑时，新机器会重新生成 track，数量可能和本地略有差异。已提交的 fixed-depth tracks 里包含短轨迹，完整数量更多；3D 优化时通过 `min_track_frames: 3` 筛成上面的 145 条。
+
 ## 原始三路后视数据：新机器部署入口
 
 本节针对项目最初的三路后视数据，不针对 Waymo。这里的三路相机是：
