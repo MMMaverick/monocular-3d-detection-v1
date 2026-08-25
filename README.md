@@ -101,6 +101,26 @@ outputs/original_2dbox_full_gpu_v1/tracks_with_depth/
 
 3D 优化默认使用 `tracks_with_depth` 里的这三份新生成 CSV。
 
+如果前面的 SAM / DA3 / tracking / depth 绑定 / ensured mask 都已经跑完，也可以直接用最终 3D YAML 只重跑最后一步：
+
+```bash
+python -m rebuild_3d_box_optimizer.run \
+  --config configs/final_step_original_2dbox_full_gpu_3d.yaml
+```
+
+这份 YAML 直接读取：
+
+```text
+outputs/original_2dbox_full_gpu_v1/tracks_with_depth/*/tracks.csv
+outputs/original_2dbox_full_gpu_v1/masks/ensured/*/gt2d_sam_masks_ensured_cropped.csv
+```
+
+输出到：
+
+```text
+outputs/final_step_original_2dbox_full_gpu_3d_v1
+```
+
 如果远端结果和本地不一致，优先检查：
 
 ```text

@@ -1,0 +1,111 @@
+base_configs:
+  - configs/rebuild_three_views_botsort_repro_local_3d_v1.yaml
+
+experiment:
+  name: final_step_original_2dbox_full_gpu_3d_v1
+  mode: offline
+  status: run_only_final_3d_step_from_full_pipeline_outputs_with_successful_3d_parameters
+
+inputs:
+  # 这份配置只跑最后一步 3D 优化。
+  # 前置步骤需要已经生成：
+  #   outputs/original_2dbox_full_gpu_v1/tracks_with_depth/*/tracks.csv
+  #   outputs/original_2dbox_full_gpu_v1/masks/ensured/*/gt2d_sam_masks_ensured_cropped.csv
+  #
+  # 原始场景数据建议放在仓库 data/ 下：
+  #   data/camera/{rear_camera,left_rear_camera,right_rear_camera}
+  #   data/calib/{camera}/{intrinsic,extrinsic}.json
+  #   data/format_output/annotations/NV/*.json
+  annotations_dir: data/format_output/annotations/NV
+  views:
+    rear:
+      camera_name: rear_camera
+      image_dir: data/camera/rear_camera
+      track_csv: outputs/original_2dbox_full_gpu_v1/tracks_with_depth/rear_camera/tracks.csv
+      mask_csv: outputs/original_2dbox_full_gpu_v1/masks/ensured/rear_camera/gt2d_sam_masks_ensured_cropped.csv
+      intrinsic: data/calib/rear_camera/rear_camera-intrinsic.json
+      camera_to_ego: data/calib/rear_camera/rear_camera-to-car_center-extrinsic.json
+    left_rear:
+      camera_name: left_rear_camera
+      image_dir: data/camera/left_rear_camera
+      track_csv: outputs/original_2dbox_full_gpu_v1/tracks_with_depth/left_rear_camera/tracks.csv
+      mask_csv: outputs/original_2dbox_full_gpu_v1/masks/ensured/left_rear_camera/gt2d_sam_masks_ensured_cropped.csv
+      intrinsic: data/calib/left_rear_camera/left_rear_camera-intrinsic.json
+      camera_to_ego: data/calib/left_rear_camera/left_rear_camera-to-car_center-extrinsic.json
+    right_rear:
+      camera_name: right_rear_camera
+      image_dir: data/camera/right_rear_camera
+      track_csv: outputs/original_2dbox_full_gpu_v1/tracks_with_depth/right_rear_camera/tracks.csv
+      mask_csv: outputs/original_2dbox_full_gpu_v1/masks/ensured/right_rear_camera/gt2d_sam_masks_ensured_cropped.csv
+      intrinsic: data/calib/right_rear_camera/right_rear_camera-intrinsic.json
+      camera_to_ego: data/calib/right_rear_camera/right_rear_camera-to-car_center-extrinsic.json
+
+observations:
+  top_bottom_edges:
+    # 成功复现版保持 10m 规则：只有 initial_distance > 10m 才启用上下贴边。
+    enabled: true
+    weight: 100.0
+    far_start_m: 10.0
+    activate_untruncated: false
+
+  depth:
+    enabled: true
+    role: initialization_only
+    initialization_mode: da3
+
+  ground_plane:
+    enabled: true
+    weight: 5.0
+    camera_height_m: 0.8
+    camera_height_m_by_view:
+      rear: 0.6
+
+  supporting_edges:
+    enabled: true
+    weight: 400.0
+    truncation_margin_px: 8.0
+
+  mask:
+    enabled: true
+    use_foreground_points: true
+    point_sample_mode: foreground_pixels
+    max_foreground_points: 512
+    contain_weight: 1000.0
+    oversize_weight: 0.002
+    oversize_max_area_ratio: 0.0
+    fallback_to_mask_bbox: false
+
+  class_size_prior:
+    enabled: true
+    weight: 100.0
+
+  size_ratio_prior:
+    enabled: true
+    weight: 1.0
+
+solver:
+  device: cuda
+  learning_rate: 0.1
+  max_iterations: 3000
+  track_parallel:
+    enabled: true
+    workers: 4
+
+output:
+  dir: outputs/final_step_original_2dbox_full_gpu_3d_v1
+  videos: true
+  video:
+    # 展示版：mask + 2D box + 3D box + BEV，不显示 loss 面板/贴边。
+    draw_mask_pixels: true
+    draw_2d_box: true
+    box_2d_thickness: 1
+    draw_3d_box: true
+    draw_projected_bbox: false
+    draw_bev: true
+    draw_loss_panel: false
+    draw_support_edges: false
+    draw_corner_points: false
+    draw_corner_labels: false
+    draw_center_projection: false
+    draw_box_dimensions: false
+    draw_truncation_label: false
