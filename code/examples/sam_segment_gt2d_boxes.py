@@ -10,8 +10,6 @@ import numpy as np
 import torch
 from segment_anything import SamPredictor, sam_model_registry
 
-from visualize_track_3d_boxes import _list_images
-
 
 DEFAULT_CAMERAS = "left_rear_camera,right_rear_camera,rear_camera"
 
@@ -247,6 +245,15 @@ def _image_path_map(image_dir: Path) -> dict[int, Path]:
         except ValueError:
             pass
     return out
+
+
+def _list_images(image_dir: Path) -> list[Path]:
+    """List camera frames locally; avoids depending on old visualization helpers."""
+
+    extensions = {".jpg", ".jpeg", ".png", ".bmp", ".webp"}
+    if not image_dir.is_dir():
+        raise FileNotFoundError(f"Image directory not found: {image_dir}")
+    return sorted(path for path in image_dir.iterdir() if path.is_file() and path.suffix.lower() in extensions)
 
 
 def _expand_box(box: np.ndarray, scale: float, width: int, height: int) -> np.ndarray:

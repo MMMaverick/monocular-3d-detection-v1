@@ -14,8 +14,6 @@ PROJECT_ROOT = Path(__file__).resolve().parents[1]
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
-from vggt_omega.reconstruction import collect_surround_image_sequence
-
 
 DEFAULT_DA3_ROOT = Path(r"C:\Users\Administrator\Documents\3ddt\map-anything\Depth-Anything-3")
 DEFAULT_MODEL_DIR = DEFAULT_DA3_ROOT / "checkpoints" / "da3metric-large"
@@ -43,9 +41,8 @@ def main() -> None:
     _prepare_da3_imports(Path(args.da3_root))
     from depth_anything_3.api import DepthAnything3
 
-    image_paths = collect_surround_image_sequence(
+    image_paths = _collect_image_sequence(
         args.input,
-        camera_dirs=None,
         stride=args.stride,
         max_frames=None if args.max_frames is None or args.max_frames < 0 else args.max_frames,
     )
@@ -131,6 +128,21 @@ def _prepare_da3_imports(da3_root: Path) -> None:
         if path.is_dir() and str(path) not in sys.path:
             sys.path.insert(0, str(path))
     os.environ.setdefault("MPLCONFIGDIR", str(PROJECT_ROOT / ".matplotlib_cache"))
+
+
+def _collect_image_sequence(input_dir: str | Path, stride: int = 1, max_frames: int | None = None) -> list[Path]:
+    """List one camera image sequence without depending on the original vggt-omega repo."""
+
+    root = Path(input_dir)
+    if not root.is_dir():
+        raise FileNotFoundError(f"Image directory not found: {root}")
+    extensions = {".jpg", ".jpeg", ".png", ".bmp", ".webp"}
+    paths = sorted(path for path in root.iterdir() if path.is_file() and path.suffix.lower() in extensions)
+    step = max(1, int(stride))
+    paths = paths[::step]
+    if max_frames is not None and int(max_frames) >= 0:
+        paths = paths[: int(max_frames)]
+    return paths
 
 
 def _load_intrinsic(path: Path) -> np.ndarray:

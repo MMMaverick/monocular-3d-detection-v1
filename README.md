@@ -309,7 +309,9 @@ P_car = T_camera_to_car @ P_camera
 
 ### 2. 环境安装
 
-推荐使用 WSL Ubuntu + Miniforge/Conda。CPU 环境可直接用仓库里的文件创建：
+推荐使用 WSL Ubuntu + Miniforge/Conda。
+
+如果只做轻量 CPU 冒烟测试，可用：
 
 ```bash
 cd /path/to/monocular-3d-detection-v1
@@ -317,7 +319,14 @@ conda env create -f environment-original-2dbox-full-cpu.yml
 conda activate mono-detect-original-2dbox-full-cpu
 ```
 
-如果要跑全量 SAM / DA3 / 3D 优化，建议使用 GPU。当前根目录没有单独维护 GPU yml，可以先创建 CPU 环境，再替换安装 CUDA 版 PyTorch。例如 CUDA 12.8：
+如果要跑全量 SAM / DA3 / 3D 优化，建议使用 GPU 环境：
+
+```bash
+conda env create -f environment-ubuntu-gpu.yml
+conda activate mono-detect-original-2dbox-full-gpu
+```
+
+然后安装 CUDA 版 PyTorch。例如 CUDA 12.8：
 
 ```bash
 pip install --force-reinstall torch torchvision --index-url https://download.pytorch.org/whl/cu128
@@ -549,7 +558,9 @@ outputs/original_2dbox_full_gpu_v1/tracking/robust_botsort_track_videos/
 ```bash
 cd /path/to/monocular-3d-detection-v1
 export PYTHONPATH="$(pwd)/code:${PYTHONPATH:-}"
-conda activate mono-detect-original-2dbox-full-cpu
+conda activate mono-detect-original-2dbox-full-gpu
+
+python scripts/check_repro_environment.py --repo "$(pwd)" --strict
 
 bash scripts/run_original_2dbox_full_pipeline.sh \
   /path/to/scene_data \
