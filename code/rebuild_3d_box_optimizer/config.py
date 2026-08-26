@@ -198,6 +198,7 @@ DEFAULT_CONFIG: dict[str, Any] = {
         "framework": "pytorch",
         "algorithm": "adam",
         "dtype": "float32",
+        "progress_interval": 100,
         "learning_rate": 0.01,
         "max_iterations": 300,
         "gradient_clip": 10.0,
@@ -220,6 +221,7 @@ DEFAULT_CONFIG: dict[str, Any] = {
         "per_residual_diagnostics": True,
         "per_frame_loss_diagnostics": True,
         "videos": True,
+        "track_videos": False,
         "video": {
             "enabled": True,
             "fps": 10.0,

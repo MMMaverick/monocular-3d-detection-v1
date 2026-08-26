@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+import time
 from typing import Any
 
 import numpy as np
@@ -53,14 +54,26 @@ def optimize_track(config: dict[str, Any], observations: list[Observation]) -> T
     iterations_used = 0
     stop_reason = "max_iterations"
     progress_interval = int(config["solver"].get("progress_interval", 0) or 0)
+    profile_timing = bool(config["solver"].get("profile_timing", False))
+    profile_interval = max(int(config["solver"].get("profile_interval", 100) or 100), 1)
+    timing_forward = timing_backward = timing_step = 0.0
+    timing_samples = 0
     progress_view = observations[0].view if observations else "unknown"
     progress_track = observations[0].track_id if observations else -1
     for step in range(max_iter):
         iterations_used = step + 1
+        sample_timing = profile_timing and (step % profile_interval == 0)
+        if sample_timing and device.type == "cuda":
+            torch.cuda.synchronize(device)
+        phase_start = time.perf_counter() if sample_timing else 0.0
         opt.zero_grad(set_to_none=True)
         size = unconstrained_to_size(size_param, min_size, max_size)
         losses = compute_losses(config, center_param, size, tensors, protect_size=True)
         total = losses["total"]
+        if sample_timing and device.type == "cuda":
+            torch.cuda.synchronize(device)
+        if sample_timing:
+            timing_forward += time.perf_counter() - phase_start
         if torch.isfinite(total):
             if step == 0 or iterations_used % check_every == 0 or iterations_used == max_iter:
                 value = float(total.detach().cpu())
@@ -75,14 +88,25 @@ def optimize_track(config: dict[str, Any], observations: list[Observation]) -> T
                 if convergence_enabled and iterations_used >= min_iter and no_improve_steps >= patience:
                     stop_reason = "converged"
                     break
+            phase_start = time.perf_counter() if sample_timing else 0.0
             total.backward()
+            if sample_timing and device.type == "cuda":
+                torch.cuda.synchronize(device)
+            if sample_timing:
+                timing_backward += time.perf_counter() - phase_start
             clip = float(config["solver"].get("gradient_clip", 0.0) or 0.0)
             if clip > 0:
                 torch.nn.utils.clip_grad_norm_([center_param, size_param], clip)
+            phase_start = time.perf_counter() if sample_timing else 0.0
             opt.step()
             if scheduler is not None:
                 scheduler.step()
                 clamp_optimizer_learning_rate(config, opt)
+            if sample_timing and device.type == "cuda":
+                torch.cuda.synchronize(device)
+            if sample_timing:
+                timing_step += time.perf_counter() - phase_start
+                timing_samples += 1
             if progress_interval > 0 and (iterations_used == 1 or iterations_used % progress_interval == 0 or iterations_used == max_iter):
                 current_value = float(total.detach().cpu())
                 print(
@@ -100,6 +124,14 @@ def optimize_track(config: dict[str, Any], observations: list[Observation]) -> T
     best_result = build_result(config, observations, best_centers, best_size, best_losses, best_loss, device, iterations_used, stop_reason, "best")
     final_loss_value = float(final_losses["total_per_frame"].sum().detach().cpu())
     final_result = build_result(config, observations, final_centers, final_size, final_losses, final_loss_value, device, iterations_used, stop_reason, "final_iter")
+    if timing_samples:
+        print(
+            f"TRACK_TIMING view={progress_view} track={progress_track} samples={timing_samples} "
+            f"forward_ms={timing_forward * 1000 / timing_samples:.3f} "
+            f"backward_ms={timing_backward * 1000 / timing_samples:.3f} "
+            f"step_ms={timing_step * 1000 / timing_samples:.3f}",
+            flush=True,
+        )
     return TrackResult(
         rows=best_result.rows,
         diagnostics=best_result.diagnostics,

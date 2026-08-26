@@ -190,7 +190,6 @@ def make_output_row(
     mask_source: str,
     fallback_reason: str,
 ) -> dict[str, object]:
-    root = Path(config["_root_dir"])
     x1, y1, x2, y2 = parse_box(track_row, ("x1", "y1", "x2", "y2")) or (0.0, 0.0, 0.0, 0.0)
     return {
         "frame": int_float(track_row.get("frame", -1)),
@@ -211,7 +210,9 @@ def make_output_row(
         "mask_y1": float(bbox[1]),
         "mask_x2": float(bbox[2]),
         "mask_y2": float(bbox[3]),
-        "mask_path": str(out_path.relative_to(root)).replace("\\", "/"),
+        # Absolute paths make ensured masks unambiguous when output_root is
+        # outside the repository or a later 3D-only run uses another config.
+        "mask_path": str(out_path.resolve()),
         "mask_source": mask_source,
         "source_mask_track_id": int_float(source_mask_row.get("track_id", -1)) if source_mask_row else "",
         "source_mask_path": source_mask_row.get("mask_path", "") if source_mask_row else "",

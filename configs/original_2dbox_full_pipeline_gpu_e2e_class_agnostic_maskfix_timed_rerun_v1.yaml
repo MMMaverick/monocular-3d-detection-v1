@@ -1,0 +1,107 @@
+schema_version: 1
+
+pipeline:
+  name: original_2dbox_full_class_agnostic_maskfix_timed_rerun_v1
+  output_root: outputs/original_2dbox_full_class_agnostic_maskfix_timed_rerun_v1
+  use_existing_2d_boxes: true
+  run_detection: false
+
+data:
+  annotation_dir: format_output/annotations/NV
+  camera_root: camera
+  calib_root: calib
+  cameras: rear_camera,left_rear_camera,right_rear_camera
+
+runtime:
+  device: cuda
+  fps: 10
+  max_frames: -1
+
+sam:
+  enabled: true
+  implementation: classic_sam
+  checkpoint: checkpoints/sam_vit_h_4b8939.pth
+  model_type: vit_h
+  box_scale: 1.5
+  positive_points: 5
+  clip_mask_to_original_box: true
+  mask_format: png
+  min_2d_score: 0.0
+
+depth:
+  enabled: true
+  implementation: da3_metric
+  da3_root: third_party/Depth-Anything-3
+  model_dir: third_party/Depth-Anything-3/checkpoints/da3metric-large
+  process_res: 336
+  chunk_size: 20
+  stride: 1
+
+tracking:
+  enabled: true
+  method: robust_botsort
+  # The renderer is presentation-only and is disabled to avoid its known
+  # relative image-directory issue in this full pipeline.
+  render_video: false
+  thickness: 1
+  appearance:
+    type: dinov2
+    model: dinov2_vitl14
+    device: cuda
+    batch_size: 24
+    crop_size: 224
+    box_padding: 0.08
+  botsort:
+    frame_rate: 10
+    track_high_thresh: 0.45
+    track_low_thresh: 0.08
+    new_track_thresh: 0.50
+    track_buffer: 60
+    match_thresh: 0.80
+    proximity_thresh: 0.70
+    appearance_thresh: 0.35
+    second_match_thresh: 0.50
+    unconfirmed_match_thresh: 0.70
+    min_hits: 1
+    max_obs: 100
+    fuse_first_associate: true
+    use_cmc: true
+    cmc_method: ecc
+    # Do not split trajectories because individual 2D labels are noisy.
+    class_aware: false
+    majority_label_all_tracks: true
+
+masks:
+  ensure_for_every_track_box: true
+  min_iou: 0.30
+  allow_label_mismatch: false
+
+optimization_3d:
+  enabled: true
+  device: cuda
+  max_iterations: 3000
+  workers: 6
+  learning_rate: 0.1
+  progress_interval: 100
+  render_video: true
+  output_videos: true
+  initialization_mode: da3
+  losses:
+    supporting_edges_weight: 400.0
+    truncation_margin_px: 8.0
+    mask_contain_weight: 1000.0
+    mask_oversize_weight: 0.002
+    class_size_prior_enabled: true
+    class_size_prior_weight: 100.0
+    size_ratio_prior_enabled: true
+    size_ratio_prior_weight: 1.0
+    ground_plane_enabled: true
+    ground_plane_weight: 5.0
+    camera_height_m: 0.8
+    camera_height_m_by_view:
+      rear: 0.6
+    top_bottom_edges_enabled: true
+    top_bottom_edges_weight: 100.0
+    top_bottom_edges_far_start_m: 10.0
+    top_bottom_edges_activate_untruncated: false
+    temporal_smoothness_enabled: true

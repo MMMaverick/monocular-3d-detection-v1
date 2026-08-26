@@ -252,7 +252,9 @@ def write_single_track_outputs(
     write_csv(final_dir / "frame_3d_boxes_world_track_joint.csv", result.final_rows)
     write_csv(final_dir / "frame_loss_diagnostics.csv", result.final_diagnostics)
     write_csv(final_dir / "track_summary.csv", [result.final_summary])
-    if config.get("output", {}).get("videos", True):
+    # Per-track videos are diagnostic-only and can dominate runtime on large runs.
+    # Keep the final per-view experiment overlays controlled by output.videos.
+    if config.get("output", {}).get("track_videos", False):
         try:
             from .visualization import render_track_video_from_rows
 

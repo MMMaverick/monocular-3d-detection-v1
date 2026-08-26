@@ -484,11 +484,28 @@ def load_masks(config: dict[str, Any], mask_csv: Path) -> dict[tuple[int, int], 
             "label": row.get("label", ""),
             "area": float(row.get("mask_area") or max((bbox[2] - bbox[0]) * (bbox[3] - bbox[1]), 1.0)),
         }
-        item["path"] = row.get("mask_path", "")
+        item["path"] = str(resolve_mask_path(config, mask_csv, row.get("mask_path", "")))
         masks.setdefault((frame, track_id), []).append(item)
         if track_id < 0:
             masks.setdefault((frame, -1), []).append(item)
     return masks
+
+
+def resolve_mask_path(config: dict[str, Any], mask_csv: Path, value: str | Path) -> Path:
+    """Resolve mask paths written relative to either the repo or an output root."""
+    path = Path(value)
+    if path.is_absolute():
+        return path
+    repo_candidate = resolve_path(config, path)
+    if repo_candidate.exists():
+        return repo_candidate
+    # Ensured-mask CSVs store paths relative to their output root, while the
+    # CSV itself lives at <output_root>/masks/ensured/<camera>/.
+    for parent in mask_csv.parents:
+        candidate = parent / path
+        if candidate.exists():
+            return candidate
+    return repo_candidate
 
 
 def load_mask_points(path: Path, max_points: int, mode: str = "foreground_pixels") -> np.ndarray | None:

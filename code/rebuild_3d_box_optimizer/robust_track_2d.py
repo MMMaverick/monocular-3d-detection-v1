@@ -127,39 +127,50 @@ def process_view(
     view_dir = output_root / str(view_cfg.get("output_name", view))
     view_dir.mkdir(parents=True, exist_ok=True)
     appearance_cfg = config["appearance"]
-    embedder = make_embedder(appearance_cfg, device_override)
     cache_path = view_dir / "detection_embeddings.npz"
-    embeddings_by_key = load_or_create_embeddings(
-        by_frame=by_frame,
-        frames=all_frames,
-        image_paths=image_paths,
-        embedder=embedder,
-        appearance_cfg=appearance_cfg,
-        cache_path=cache_path,
-        force=force_embeddings,
-    )
+    cache_root = str(appearance_cfg.get("cache_root", "") or "")
+    source_cache = resolve_project_path(cache_root) / str(view_cfg.get("output_name", view)) / "detection_embeddings.npz" if cache_root else cache_path
+    embeddings_by_key = None if force_embeddings else load_cached_embeddings(source_cache, by_frame, all_frames)
+    if embeddings_by_key is None:
+        embedder = make_embedder(appearance_cfg, device_override)
+        embeddings_by_key = load_or_create_embeddings(
+            by_frame=by_frame,
+            frames=all_frames,
+            image_paths=image_paths,
+            embedder=embedder,
+            appearance_cfg=appearance_cfg,
+            cache_path=cache_path,
+            force=force_embeddings,
+        )
+        appearance_name = embedder.name
+        cache_path = cache_path
+    else:
+        appearance_name = f"{appearance_cfg.get('model', appearance_cfg.get('type', 'appearance'))}_cached"
+        cache_path = source_cache
 
+    class_aware = bool(config["tracker"].get("class_aware", True))
+    majority_label_all_tracks = bool(config["tracker"].get("majority_label_all_tracks", False))
     trackers: dict[int, Any] = {}
     output_rows: list[dict[str, Any]] = []
     tracked_detection_keys: set[tuple[int, int]] = set()
     for index, frame in enumerate(all_frames):
         frame_dets = by_frame.get(frame, [])
         image = load_frame_image(frame_dets, image_paths[frame])
-        class_ids = sorted(set(trackers) | {det.class_id for det in frame_dets})
-        for class_id in class_ids:
-            if class_id not in trackers:
-                trackers[class_id] = make_tracker(config["tracker"])
-            tracker = trackers[class_id]
-            det_indices = [i for i, det in enumerate(frame_dets) if det.class_id == class_id]
+        tracker_keys = sorted(set(trackers) | {det.class_id for det in frame_dets}) if class_aware else [0]
+        for tracker_key in tracker_keys:
+            if tracker_key not in trackers:
+                trackers[tracker_key] = make_tracker(config["tracker"])
+            tracker = trackers[tracker_key]
+            det_indices = [i for i, det in enumerate(frame_dets) if not class_aware or det.class_id == tracker_key]
             det_array = np.asarray(
-                [[*frame_dets[i].box.tolist(), frame_dets[i].score, class_id] for i in det_indices],
+                [[*frame_dets[i].box.tolist(), frame_dets[i].score, frame_dets[i].class_id] for i in det_indices],
                 dtype=np.float32,
             ).reshape(-1, 6)
             emb_array = np.asarray(
                 [embeddings_by_key[(frame, i)] for i in det_indices], dtype=np.float32
             )
             if not det_indices:
-                emb_array = np.empty((0, embedder.dimension), dtype=np.float32)
+                emb_array = np.empty((0, 0), dtype=np.float32)
 
             tracks = np.asarray(tracker.update(det_array, image, embs=emb_array), dtype=np.float32).reshape(-1, 8)
             for track in tracks:
@@ -172,7 +183,8 @@ def process_view(
                 if key in tracked_detection_keys:
                     raise RuntimeError(f"Detection assigned twice: view={view} frame={frame} index={det_index}")
                 tracked_detection_keys.add(key)
-                track_id = class_id * 1_000_000 + int(round(float(track[4])))
+                local_track_id = int(round(float(track[4])))
+                track_id = tracker_key * 1_000_000 + local_track_id if class_aware else local_track_id
                 output_rows.append(make_output_row(det, view, track_id, track[:4], "matched"))
             # Preserve the first assignment of a newly created track.
             for pending in tracker.active_tracks:
@@ -187,7 +199,8 @@ def process_view(
                     continue
                 det = frame_dets[det_index]
                 tracked_detection_keys.add(key)
-                track_id = class_id * 1_000_000 + int(pending.id)
+                local_track_id = int(pending.id)
+                track_id = tracker_key * 1_000_000 + local_track_id if class_aware else local_track_id
                 output_rows.append(make_output_row(det, view, track_id, pending.xyxy, "tentative"))
 
         if (index + 1) % 100 == 0 or index + 1 == len(all_frames):
@@ -201,7 +214,7 @@ def process_view(
                 output_rows.append(make_output_row(det, view, -1, det.box, "unassigned"))
 
     remapped_track_ids = apply_track_id_remaps(output_rows, config.get("track_id_remaps", {}).get(view, {}))
-    apply_majority_track_labels(output_rows, remapped_track_ids)
+    apply_majority_track_labels(output_rows, None if majority_label_all_tracks else remapped_track_ids)
     output_rows.sort(key=lambda row: (int(row["frame"]), int(row["track_id"]), int(row["source_detection_index"])))
     tracks_csv = view_dir / "tracks.csv"
     write_csv(tracks_csv, output_rows)
@@ -218,7 +231,7 @@ def process_view(
         "tracks": len(track_summary),
         "tracks_csv": display_path(tracks_csv),
         "embedding_cache": display_path(cache_path),
-        "appearance": embedder.name,
+        "appearance": appearance_name,
     }
 
 
@@ -274,7 +287,12 @@ class DinoV2Embedder:
             )
         self.model = torch.hub.load(str(hub_dir), model_name, source="local", pretrained=True)
         self.model.eval().to(self.device)
-        if self.device.type == "cuda":
+        # The PPU torch backend accepts CUDA device names but its DINOv2
+        # FP16 path exits without an exception during long crop batches.
+        # Keep CUDA/NVIDIA behavior unchanged and use stable FP32 on PPU.
+        device_name = torch.cuda.get_device_name(self.device) if self.device.type == "cuda" else ""
+        self.use_half = self.device.type == "cuda" and "PPU" not in device_name.upper()
+        if self.use_half:
             self.model.half()
         self.dimension = int(getattr(self.model, "embed_dim", 1024))
 
@@ -286,8 +304,13 @@ class DinoV2Embedder:
         outputs = []
         for start in range(0, len(crops), self.batch_size):
             batch = torch.from_numpy(np.stack(crops[start : start + self.batch_size])).to(self.device)
-            batch = batch.half() if self.device.type == "cuda" else batch.float()
+            batch = batch.half() if self.use_half else batch.float()
             features = self.model(batch)
+            if self.device.type == "cuda" and not self.use_half:
+                # PPU execution is asynchronous; synchronize each DINO batch
+                # to prevent a long tracking sequence from accumulating an
+                # unstable device queue.
+                torch.cuda.synchronize(self.device)
             features = torch.nn.functional.normalize(features.float(), dim=1)
             outputs.append(features.cpu().numpy())
         return np.concatenate(outputs, axis=0).astype(np.float32)
@@ -324,13 +347,9 @@ def load_or_create_embeddings(
     cache_path: Path,
     force: bool,
 ) -> dict[tuple[int, int], np.ndarray]:
-    expected_keys = [(frame, index) for frame in frames for index in range(len(by_frame.get(frame, [])))]
-    if cache_path.exists() and not force:
-        payload = np.load(cache_path)
-        keys = payload["keys"]
-        embeddings = payload["embeddings"]
-        cached = {(int(key[0]), int(key[1])): emb for key, emb in zip(keys, embeddings, strict=True)}
-        if all(key in cached for key in expected_keys):
+    if not force:
+        cached = load_cached_embeddings(cache_path, by_frame, frames)
+        if cached is not None:
             return cached
 
     keys: list[tuple[int, int]] = []
@@ -349,6 +368,19 @@ def load_or_create_embeddings(
     array = np.stack(features).astype(np.float32) if features else np.empty((0, embedder.dimension), np.float32)
     np.savez_compressed(cache_path, keys=np.asarray(keys, dtype=np.int32), embeddings=array)
     return {key: emb for key, emb in zip(keys, array, strict=True)}
+
+
+def load_cached_embeddings(
+    cache_path: Path, by_frame: dict[int, list[Detection]], frames: list[int]
+) -> dict[tuple[int, int], np.ndarray] | None:
+    if not cache_path.exists():
+        return None
+    payload = np.load(cache_path)
+    keys = payload["keys"]
+    embeddings = payload["embeddings"]
+    cached = {(int(key[0]), int(key[1])): emb for key, emb in zip(keys, embeddings, strict=True)}
+    expected_keys = [(frame, index) for frame in frames for index in range(len(by_frame.get(frame, [])))]
+    return cached if all(key in cached for key in expected_keys) else None
 
 
 def make_tracker(cfg: dict[str, Any]):

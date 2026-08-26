@@ -79,6 +79,10 @@ DEFAULTS: dict[str, Any] = {
             "fuse_first_associate": True,
             "use_cmc": True,
             "cmc_method": "ecc",
+            # Preserve the historical class-separated BoT-SORT unless an
+            # experiment explicitly opts into label-noise-tolerant tracking.
+            "class_aware": True,
+            "majority_label_all_tracks": False,
         },
         # Kept as a light fallback/debug path; the reproduction path uses BoT-SORT.
         "sort": {},
@@ -90,6 +94,8 @@ DEFAULTS: dict[str, Any] = {
         "max_iterations": 3000,
         "workers": 4,
         "learning_rate": 0.1,
+        # Emit optimizer state for each track at a useful, low-overhead cadence.
+        "progress_interval": 100,
         "render_video": True,
         "output_videos": True,
         "initialization_mode": "da3",
@@ -340,6 +346,7 @@ def write_3d_optimizer_config(cfg: dict[str, Any], path: Path) -> None:
         f"  device: {cfg['optimization_3d']['device']}",
         f"  max_iterations: {int(cfg['optimization_3d']['max_iterations'])}",
         f"  learning_rate: {float(cfg['optimization_3d']['learning_rate'])}",
+        f"  progress_interval: {int(cfg['optimization_3d'].get('progress_interval', 100))}",
         "  track_parallel:",
         "    enabled: true",
         f"    workers: {int(cfg['optimization_3d']['workers'])}",
