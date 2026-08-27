@@ -66,6 +66,9 @@ def main() -> None:
     parser.add_argument("--moving-threshold-mps", type=float, default=2.0)
     parser.add_argument("--motion-policy", choices=["majority", "ratio", "median", "any"], default="ratio")
     parser.add_argument("--moving-ratio-threshold", type=float, default=0.30)
+    parser.add_argument("--static-preference-ratio-threshold", type=float, default=0.10)
+    parser.add_argument("--near-distance-m", type=float, default=20.0)
+    parser.add_argument("--far-distance-m", type=float, default=50.0)
     parser.add_argument("--smooth-window", type=int, default=7)
     parser.add_argument("--hampel-window", type=int, default=5)
     parser.add_argument("--hampel-sigma", type=float, default=3.0)
@@ -93,6 +96,9 @@ def main() -> None:
         moving_threshold_mps=args.moving_threshold_mps,
         motion_policy=args.motion_policy,
         moving_ratio_threshold=args.moving_ratio_threshold,
+        static_preference_ratio_threshold=args.static_preference_ratio_threshold,
+        near_distance_m=args.near_distance_m,
+        far_distance_m=args.far_distance_m,
         smooth_window=args.smooth_window,
         hampel_window=args.hampel_window,
         hampel_sigma=args.hampel_sigma,
@@ -155,6 +161,9 @@ def smooth_and_label(
     moving_threshold_mps: float,
     motion_policy: str,
     moving_ratio_threshold: float,
+    static_preference_ratio_threshold: float,
+    near_distance_m: float,
+    far_distance_m: float,
     smooth_window: int,
     hampel_window: int,
     hampel_sigma: float,
@@ -235,6 +244,17 @@ def smooth_and_label(
             track_state = "moving" if counts["moving"] >= max(1, counts["static"]) else "static"
             state_reason = "moving_frames_at_least_static_frames"
 
+        preference, confidence, moving_probability, static_probability = motion_preference_confidence(
+            track_state=track_state,
+            track_usable=track_usable,
+            moving_ratio=moving_ratio,
+            moving_ratio_threshold=moving_ratio_threshold,
+            static_preference_ratio_threshold=static_preference_ratio_threshold,
+            median_distance_m=float(np.nanmedian(distance_m)),
+            near_distance_m=near_distance_m,
+            far_distance_m=far_distance_m,
+        )
+
         labels = [r.get("class") or r.get("label") or "" for r in items]
         majority_class = Counter(labels).most_common(1)[0][0] if labels else ""
 
@@ -253,6 +273,10 @@ def smooth_and_label(
                     "speed_1s_mps": f"{speeds[idx]:.6f}" if np.isfinite(speeds[idx]) else "",
                     "motion_state": frame_states[idx],
                     "track_motion_state": track_state,
+                    "track_motion_preference": preference,
+                    "track_motion_confidence": fmt_float(confidence),
+                    "track_moving_probability": fmt_float(moving_probability),
+                    "track_static_probability": fmt_float(static_probability),
                     "track_usable_for_motion": str(bool(track_usable)),
                     "motion_outlier_replaced": str(bool(outlier_mask[idx])),
                 }
@@ -288,10 +312,17 @@ def smooth_and_label(
                 "outlier_frames": int(outlier_mask.sum()),
                 "usable_for_motion": str(bool(track_usable)),
                 "motion_state": track_state,
+                "motion_preference": preference,
+                "motion_confidence": fmt_float(confidence),
+                "moving_probability": fmt_float(moving_probability),
+                "static_probability": fmt_float(static_probability),
                 "motion_state_reason": state_reason,
                 "moving_threshold_mps": moving_threshold_mps,
                 "motion_policy": motion_policy,
                 "moving_ratio_threshold": moving_ratio_threshold,
+                "static_preference_ratio_threshold": static_preference_ratio_threshold,
+                "near_distance_m": near_distance_m,
+                "far_distance_m": far_distance_m,
                 "speed_window_s": speed_window_s,
             }
         )
@@ -363,6 +394,67 @@ def one_second_speeds(ts: np.ndarray, xy: np.ndarray, window_s: float) -> np.nda
             continue
         speeds[i] = float(np.linalg.norm(xy[i] - xy[j]) / dt)
     return speeds
+
+
+def motion_preference_confidence(
+    *,
+    track_state: str,
+    track_usable: bool,
+    moving_ratio: float,
+    moving_ratio_threshold: float,
+    static_preference_ratio_threshold: float,
+    median_distance_m: float,
+    near_distance_m: float,
+    far_distance_m: float,
+) -> tuple[str, float, float, float]:
+    """Return practical preference, confidence, and normalized probabilities.
+
+    `motion_state` remains the hard state.  For downstream use, uncertain
+    tracks still receive a softer `motion_preference` when the moving-ratio
+    evidence is clearly leaning to one side.
+
+    The probability pair is deliberately simple and normalized:
+      moving_probability = moving_ratio
+      static_probability = 1 - moving_ratio
+    It is an evidence score from speed samples, not a calibrated Bayesian
+    probability of the object truly moving.
+    """
+    if not np.isfinite(moving_ratio):
+        moving_probability = 0.5
+        static_probability = 0.5
+        preference = "unknown"
+        confidence = 0.0
+        return preference, confidence, moving_probability, static_probability
+
+    moving_probability = float(np.clip(moving_ratio, 0.0, 1.0))
+    static_probability = 1.0 - moving_probability
+
+    if track_state in {"moving", "static"}:
+        preference = track_state
+    elif moving_ratio >= moving_ratio_threshold:
+        preference = "moving"
+    elif moving_ratio <= static_preference_ratio_threshold:
+        preference = "static"
+    else:
+        preference = "unknown"
+
+    reliability = 1.0 if track_usable else 0.5
+    denom = max(float(moving_ratio_threshold), 1.0e-6)
+    ratio_certainty = float(np.clip(abs(moving_ratio - moving_ratio_threshold) / denom, 0.0, 1.0))
+
+    if not np.isfinite(median_distance_m):
+        distance_reliability = 0.5
+    elif median_distance_m < near_distance_m:
+        distance_reliability = 1.0
+    elif median_distance_m < far_distance_m:
+        distance_reliability = 0.7
+    else:
+        distance_reliability = 0.4
+
+    confidence = float(np.clip(reliability * ratio_certainty * distance_reliability, 0.0, 1.0))
+    if preference == "unknown":
+        confidence *= 0.5
+    return preference, confidence, moving_probability, static_probability
 
 
 def timestamp_seconds(row: dict[str, str], fps: float) -> float:

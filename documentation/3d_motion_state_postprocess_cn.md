@@ -43,6 +43,12 @@ videos/
   - `moving`
   - `static`
   - `uncertain`
+- `motion_preference`
+  - 给下游使用的软倾向：`moving` / `static` / `unknown`。
+- `motion_confidence`
+  - 0~1 的可信度分数，用于排序/筛选，不是严格标定概率。
+- `moving_probability` / `static_probability`
+  - 归一化动静证据分数，两者相加等于 1。
 - `motion_state_reason`
   - 状态由哪条规则得到。
 - `moving_ratio`
@@ -97,6 +103,9 @@ speed_window_s = 1.0
 moving_threshold_mps = 2.0
 motion_policy = ratio
 moving_ratio_threshold = 0.30
+static_preference_ratio_threshold = 0.10
+near_distance_m = 20.0
+far_distance_m = 50.0
 smooth_window = 7
 hampel_window = 5
 hampel_sigma = 3.0
@@ -112,6 +121,10 @@ min_track_duration_s = 1.0
 - `moving_ratio_threshold=0.30`
   - 至少 30% 的有效速度片段在动，整条 track 才判为动态。
   - 这样可以避免 3D box 偶发抖动把静态车误判成动态。
+- `static_preference_ratio_threshold=0.10`
+  - 对 `uncertain` track，如果 moving 片段比例低于 10%，倾向输出 `motion_preference=static`。
+- `near_distance_m=20.0` / `far_distance_m=50.0`
+  - 近距离轨迹可信度更高，远距离轨迹可信度降低。
 - `smooth_window=7`
   - 对 world 坐标做轻量平滑，降低单帧跳变。
 - `hampel_window=5` / `hampel_sigma=3.0`
@@ -137,6 +150,9 @@ C:\ProgramData\miniforge3\envs\dvgt\python.exe D:\mono-detect\scripts\robust_wor
   --moving-threshold-mps 2.0 `
   --motion-policy ratio `
   --moving-ratio-threshold 0.30 `
+  --static-preference-ratio-threshold 0.10 `
+  --near-distance-m 20.0 `
+  --far-distance-m 50.0 `
   --smooth-window 7 `
   --hampel-window 5 `
   --hampel-sigma 3.0 `
@@ -182,3 +198,64 @@ uncertain: 70
 - 对下游任务来说，如果“静态误判动态”的代价更大，可以提高 `moving_ratio_threshold`，例如从 `0.30` 提到 `0.40` 或 `0.50`。
 - 如果“动态误判静态”的代价更大，可以降低 `moving_ratio_threshold`，例如 `0.20`。
 - 不建议使用“只要一帧速度超过阈值就动态”的规则，因为当前 monocular 3D 结果会有偶发深度跳变。
+
+## 7. `uncertain` 的可用倾向与归一化概率
+
+`motion_state=uncertain` 表示这条轨迹不适合给硬判定，常见原因是帧数太少、持续时间太短、远距离抖动明显，或平滑后仍有较大残余跳变。
+
+但下游通常仍然需要一个可用倾向，因此额外输出：
+
+```text
+motion_preference: moving / static / unknown
+motion_confidence: 0~1
+moving_probability + static_probability = 1
+```
+
+当前规则：
+
+```text
+如果 motion_state 是 moving/static：
+    motion_preference = motion_state
+
+如果 motion_state 是 uncertain：
+    moving_ratio >= 0.30:
+        motion_preference = moving
+    moving_ratio <= 0.10:
+        motion_preference = static
+    其他：
+        motion_preference = unknown
+```
+
+归一化概率：
+
+```text
+moving_probability = clamp(moving_ratio, 0, 1)
+static_probability = 1 - moving_probability
+```
+
+注意：这里的 probability 是速度片段比例形成的“证据分数”，不是经过校准的真实概率。
+
+`motion_confidence` 的计算：
+
+```text
+motion_confidence = 规则可靠性 × 比例确定性 × 距离可靠性
+```
+
+其中：
+
+```text
+规则可靠性:
+  usable_for_motion=True   -> 1.0
+  usable_for_motion=False  -> 0.5
+
+比例确定性:
+  abs(moving_ratio - 0.30) / 0.30
+  然后 clamp 到 0~1
+
+距离可靠性:
+  distance < 20m   -> 1.0
+  20m~50m          -> 0.7
+  >50m             -> 0.4
+```
+
+如果 `motion_preference=unknown`，最终 confidence 再乘 0.5。

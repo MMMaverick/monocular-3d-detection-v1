@@ -220,6 +220,9 @@ C:\ProgramData\miniforge3\envs\dvgt\python.exe D:\mono-detect\scripts\robust_wor
   --moving-threshold-mps 2.0 `
   --motion-policy ratio `
   --moving-ratio-threshold 0.30 `
+  --static-preference-ratio-threshold 0.10 `
+  --near-distance-m 20.0 `
+  --far-distance-m 50.0 `
   --smooth-window 7 `
   --hampel-window 5 `
   --hampel-sigma 3.0 `
@@ -262,6 +265,10 @@ moving 时间片比例 >= 0.30 的 track 判为 moving。
   - `majority`：帧级 moving 数量不少于 static 数量则判动态；
 - `moving-ratio-threshold`
   - `ratio` 策略下的动态片段比例阈值；
+- `static-preference-ratio-threshold`
+  - 对 `uncertain` track，如果 moving 片段比例低于该值，软倾向输出 `static`；
+- `near-distance-m` / `far-distance-m`
+  - 用于 `motion_confidence` 的距离可靠性分段；
 - `smooth-window`
   - world 坐标平滑窗口；
 - `hampel-window` / `hampel-sigma`
@@ -282,6 +289,10 @@ first_frame
 last_frame
 duration_s
 motion_state
+motion_preference
+motion_confidence
+moving_probability
+static_probability
 motion_state_reason
 moving_ratio
 median_speed_1s_mps
@@ -307,6 +318,12 @@ usable_for_motion
 
 - `motion_state`
   - 最终每个 track 的状态；
+- `motion_preference`
+  - 下游可直接使用的软倾向：`moving/static/unknown`；
+- `motion_confidence`
+  - 0~1 的可信度分数，用于排序/筛选，不是严格标定概率；
+- `moving_probability` / `static_probability`
+  - 由速度片段比例得到的归一化证据分数，两者相加等于 1；
 - `moving_ratio`
   - 有多少比例的有效速度片段超过动态阈值；
 - `distance_to_ego_*`
@@ -323,6 +340,65 @@ usable_for_motion
   - Hampel filter 替换过的异常帧数量；
 - `usable_for_motion`
   - 该轨迹是否满足最小帧数、最小时长、最大残余跳变约束。
+
+### 6.1 `uncertain` 的可用倾向
+
+硬状态 `motion_state=uncertain` 只表示这条 track 不适合直接给硬判定；为了让下游仍能使用，会额外输出：
+
+```text
+motion_preference: moving / static / unknown
+motion_confidence: 0~1
+moving_probability + static_probability = 1
+```
+
+规则：
+
+```text
+如果 motion_state 是 moving/static：
+    motion_preference = motion_state
+
+如果 motion_state 是 uncertain：
+    moving_ratio >= moving_ratio_threshold:
+        motion_preference = moving
+    moving_ratio <= static_preference_ratio_threshold:
+        motion_preference = static
+    其他：
+        motion_preference = unknown
+```
+
+归一化概率：
+
+```text
+moving_probability = clamp(moving_ratio, 0, 1)
+static_probability = 1 - moving_probability
+```
+
+这里的 probability 是速度片段比例形成的证据分数，不是经过校准的真实概率。
+
+置信度：
+
+```text
+motion_confidence = 规则可靠性 × 比例确定性 × 距离可靠性
+```
+
+默认取值：
+
+```text
+规则可靠性:
+  usable_for_motion=True   -> 1.0
+  usable_for_motion=False  -> 0.5
+
+比例确定性:
+  abs(moving_ratio - 0.30) / 0.30
+  clamp 到 0~1
+
+距离可靠性:
+  distance < 20m   -> 1.0
+  20m~50m          -> 0.7
+  >50m             -> 0.4
+```
+
+如果 `motion_preference=unknown`，最终 confidence 再乘 0.5。
 
 ## 7. 可视化
 
